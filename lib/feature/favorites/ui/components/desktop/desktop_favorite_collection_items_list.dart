@@ -1,0 +1,248 @@
+import 'package:bilimusic/common/bm_icons.dart';
+import 'package:bilimusic/common/components/cached_image.dart';
+import 'package:bilimusic/common/components/selectable_auto_scroll_list_view.dart';
+import 'package:bilimusic/common/components/tag.dart';
+import 'package:bilimusic/feature/favorites/domain/favorite_entry.dart';
+import 'package:bilimusic/feature/favorites/logic/favorites_view_mode_logic.dart';
+import 'package:bilimusic/feature/favorites/ui/components/favorite_entry_subtitle.dart';
+import 'package:bilimusic/feature/favorites/ui/components/favorite_metadata_tile.dart';
+import 'package:bilimusic/feature/statistics/logic/statistics_tracker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hugeicons/hugeicons.dart';
+
+typedef DesktopFavoriteCollectionItemCallback =
+    void Function(int index, FavoriteEntry item);
+
+class DesktopFavoriteCollectionItemsList extends ConsumerWidget {
+  const DesktopFavoriteCollectionItemsList({
+    super.key,
+    required this.items,
+    required this.footer,
+    this.onNotification,
+    required this.selectedItemIds,
+    required this.selectionMode,
+    required this.onSelectionModeChanged,
+    required this.onSelectionChanged,
+    required this.onTapItem,
+    required this.onPlayItem,
+    required this.onMoreItem,
+    this.viewMode = FavoriteListViewMode.video,
+    this.scrollToKey,
+    this.scrollRequest = 0,
+  });
+
+  final List<FavoriteEntry> items;
+  final Widget footer;
+  final String? scrollToKey;
+  final int scrollRequest;
+  final NotificationListenerCallback<ScrollNotification>? onNotification;
+  final Set<String> selectedItemIds;
+  final bool selectionMode;
+  final ValueChanged<bool> onSelectionModeChanged;
+  final ValueChanged<Set<String>> onSelectionChanged;
+  final DesktopFavoriteCollectionItemCallback onTapItem;
+  final DesktopFavoriteCollectionItemCallback onPlayItem;
+  final DesktopFavoriteCollectionItemCallback onMoreItem;
+  final FavoriteListViewMode viewMode;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final StatisticsTracker tracker = ref.read(statisticsTrackerProvider);
+    return NotificationListener<ScrollNotification>(
+      onNotification: onNotification,
+      child: SelectableAutoScrollListView<FavoriteEntry, String>(
+        items: items,
+        scrollToKey: scrollToKey,
+        scrollRequest: scrollRequest,
+        itemKeyOf: (FavoriteEntry item) => item.itemId,
+        selectedKeys: selectedItemIds,
+        multiSelectEnabled: selectionMode,
+        onMultiSelectModeChanged: onSelectionModeChanged,
+        onSelectionChanged: onSelectionChanged,
+        onItemTap: (FavoriteEntry item) {
+          final int index = items.indexOf(item);
+          if (index < 0) {
+            return;
+          }
+          onTapItem(index, item);
+        },
+        padding: EdgeInsets.zero,
+        footer: footer,
+        separatorBuilder: (_, _) => const SizedBox.shrink(),
+        checkboxControlAffinity: ListTileControlAffinity.trailing,
+        itemBuilder: (context, item, state) => ListTileTheme(
+          data: ListTileTheme.of(context).copyWith(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+            tileColor: state.index.isEven
+                ? Colors.transparent
+                : Color.alphaBlend(
+                    const Color(0xFFBDBDBD).withValues(alpha: 0.1),
+                    Theme.of(context).colorScheme.surface,
+                  ),
+          ),
+          child: viewMode == FavoriteListViewMode.metadata
+              ? _buildMetadataItem(context, item, state)
+              : _buildNormalItem(context, item, state, tracker),
+        ),
+        titleBuilder: _buildTitle,
+        subtitleBuilder: (context, item, state) =>
+            _buildSubtitle(context, item, state, tracker),
+        leadingBuilder: _buildLeading,
+        trailingBuilder: _buildTrailing,
+      ),
+    );
+  }
+
+  Widget _buildNormalItem(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+    StatisticsTracker tracker,
+  ) {
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
+        leading: _buildLeading(context, item, state),
+        title: _buildTitle(context, item, state),
+        subtitle: _buildSubtitle(context, item, state, tracker),
+        trailing: _buildTrailing(context, item, state),
+        selected: state.selected,
+        onTap: state.handleTap,
+        onLongPress: state.enterMultiSelectAndToggle,
+      ),
+    );
+  }
+
+  Widget _buildMetadataItem(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+  ) {
+    final int index = items.indexOf(item);
+    return FavoriteMetadataTile(
+      entry: item,
+      selected: state.selected,
+      coverRadius: 14,
+      titleWeight: FontWeight.w700,
+      onTap: state.handleTap,
+      onLongPress: state.enterMultiSelectAndToggle,
+      onPlay: () {
+        if (index >= 0) {
+          onPlayItem(index, item);
+        }
+      },
+      onMore: () {
+        if (index >= 0) {
+          onMoreItem(index, item);
+        }
+      },
+    );
+  }
+
+  Widget _buildLeading(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+  ) {
+    final Color primary = Theme.of(context).colorScheme.primary;
+
+    return CommonCachedImage(
+      imageUrl: item.coverUrl,
+      width: 44,
+      height: 44,
+      fit: BoxFit.cover,
+      borderRadius: BorderRadius.circular(14),
+      fallbackIcon: Icons.music_note_rounded,
+      iconColor: primary,
+      backgroundColor: primary.withValues(alpha: 0.14),
+    );
+  }
+
+  Widget _buildTitle(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+  ) {
+    return Text(
+      item.title,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: Theme.of(
+        context,
+      ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+    );
+  }
+
+  Widget _buildSubtitle(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+    StatisticsTracker tracker,
+  ) {
+    final ThemeData theme = Theme.of(context);
+    final int playCount = tracker.read(item.itemId)?.playCount ?? 0;
+
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            buildFavoriteEntrySubtitle(item),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              height: 1.5,
+            ),
+          ),
+        ),
+        if (playCount > 0) ...<Widget>[
+          const SizedBox(width: 6),
+          Tag(
+            text: '$playCount',
+            color: Colors.grey.withValues(alpha: 0.2),
+            textColor: const Color.fromARGB(255, 134, 134, 134),
+            size: TagSize.small,
+            icon: const HugeIcon(
+              icon: HugeIcons.strokeRoundedHeadphones,
+              size: 12,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTrailing(
+    BuildContext context,
+    FavoriteEntry item,
+    SelectableListItemState<FavoriteEntry, String> state,
+  ) {
+    final int index = items.indexOf(item);
+
+    return Row(
+      spacing: 0,
+      mainAxisAlignment: MainAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        IconButton(
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          tooltip: '播放',
+          onPressed: index < 0 ? null : () => onPlayItem(index, item),
+          icon: const Icon(BmIcons.addPlaylist),
+        ),
+        IconButton(
+          padding: EdgeInsets.zero,
+          visualDensity: VisualDensity.compact,
+          tooltip: '更多',
+          onPressed: index < 0 ? null : () => onMoreItem(index, item),
+          icon: const Icon(Icons.more_vert_outlined),
+        ),
+      ],
+    );
+  }
+}

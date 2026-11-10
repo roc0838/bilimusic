@@ -1,0 +1,314 @@
+name: Flutter Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: bili-music ${{ github.ref_name }}
+          body: |
+            **bili-music ${{ github.ref_name }}**
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-ios:
+    name: Build iOS (Unsigned IPA)
+    runs-on: macos-latest
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build iOS
+        run: |
+          flutter build ios --release --no-codesign
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+          find Payload/Runner.app/Frameworks -type d -name "*.framework" -exec codesign --force --sign - --preserve-metadata=identifier,entitlements {} \;
+          zip -r9 "bili-music-${GITHUB_REF_NAME}.ipa" Payload
+
+      - name: Upload iOS release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: bili-music-*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos-dmg:
+    name: Build macOS DMG (Unsigned)
+    runs-on: macos-latest
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install packaging tools
+        run: |
+          npm install -g appdmg
+          dart pub global activate fastforge
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Prepare DMG config
+        run: |
+          mkdir -p macos/packaging/dmg
+          cp scripts/macos/make_config.yaml macos/packaging/dmg/make_config.yaml
+
+      - name: Build macOS DMG
+        run: fastforge package --platform macos --targets dmg
+
+      - name: Collect macOS DMG
+        run: |
+          mkdir -p build/artifacts
+          DMG_PATH="$(find dist -name '*.dmg' -type f -print -quit)"
+          if [ -z "$DMG_PATH" ]; then
+            echo "No DMG found under dist"
+            exit 1
+          fi
+          cp "$DMG_PATH" "build/artifacts/bili-music-${GITHUB_REF_NAME}-macos.dmg"
+
+      - name: Upload macOS DMG release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: build/artifacts/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-android:
+    name: Build Android Release
+    runs-on: ubuntu-latest
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.44.0'
+          cache: true
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Setup keystore
+        run: |
+          echo '${{ secrets.KEYSTORE }}' | base64 --decode > android/app/apr-release-key.jks
+          echo '${{ secrets.KEY_PROPERTIES }}' > android/key.properties
+
+      - name: Build Android Split APKs
+        run: flutter build apk --release --split-per-abi --flavor production --obfuscate --split-debug-info=./build/app/intermediates
+
+      - name: Rename Android APKs
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          mkdir -p build/artifacts
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-production-release.apk "build/artifacts/bili-music-${VERSION}-armeabi-v7a.apk"
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-production-release.apk "build/artifacts/bili-music-${VERSION}-arm64-v8a.apk"
+          cp build/app/outputs/flutter-apk/app-x86_64-production-release.apk "build/artifacts/bili-music-${VERSION}-x86_64.apk"
+
+      - name: Upload Android release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            build/artifacts/bili-music-*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Setup Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows Installer
+        shell: pwsh
+        run: |
+          $env:APP_VERSION = "${{ github.ref_name }}"
+          iscc scripts/bilimusic.iss
+
+      - name: Upload Windows release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: build/artifacts/bilimusic-*-windows-setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows-arm64:
+    name: Build Windows ARM64 Installer
+    runs-on: windows-11-arm
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "master"
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build Windows (ARM64)
+        run: flutter build windows --release
+
+      - name: Patch libmpv with ARM64 build
+        shell: pwsh
+        run: |
+          # media_kit_libs_windows_audio 目前只捆绑 x86_64 的 libmpv
+          # （上游 media-kit/media-kit#867 尚未支持 Windows ARM64），
+          # 这里用 media-kit 官方发布的 aarch64 构建替换产物中的
+          # libmpv-2.dll，保证 ARM64 进程能正常加载音频后端。
+          $url = "https://github.com/media-kit/libmpv-win32-video-cmake/releases/download/20241021/mpv-dev-aarch64-20241021-git-0f78584.7z"
+          $archive = Join-Path $env:RUNNER_TEMP "mpv-dev-aarch64.7z"
+          $extract = Join-Path $env:RUNNER_TEMP "mpv-arm64"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          New-Item -ItemType Directory -Force -Path $extract | Out-Null
+          tar.exe -xf $archive -C $extract
+          Copy-Item -Force "$extract\libmpv-2.dll" "build\windows\arm64\runner\Release\libmpv-2.dll"
+
+      - name: Setup Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Windows ARM64 Installer
+        shell: pwsh
+        run: |
+          $env:APP_VERSION = "${{ github.ref_name }}"
+          iscc scripts/bilimusic-arm64.iss
+
+      - name: Upload Windows ARM64 release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: build/artifacts/bilimusic-*-windows-arm64-setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux-appimage:
+    name: Build Linux AppImage
+    runs-on: ubuntu-22.04
+    needs:
+      - release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: "3.44.0"
+          cache: true
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            cmake \
+            curl \
+            file \
+            imagemagick \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            libgtk-3-dev \
+            libkeybinder-3.0-dev \
+            liblzma-dev \
+            libwebkit2gtk-4.1-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      - name: Build AppImage
+        run: |
+          chmod +x scripts/package_appimage.sh
+          scripts/package_appimage.sh "${GITHUB_REF_NAME}"
+
+      - name: Upload Linux AppImage release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: build/artifacts/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,16 @@
+import 'dart:io';
+
+class PlatformUtil {
+  static bool get isDesktop =>
+      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+  static bool get isMobile => Platform.isAndroid || Platform.isIOS;
+
+  static bool get isAndroid => Platform.isAndroid;
+
+  static bool get isWindows => Platform.isWindows;
+  static bool get isLinux => Platform.isLinux;
+  static bool get isMacOS => Platform.isMacOS;
+
+  static bool get isDesktopLyricsSupported =>
+      Platform.isWindows || Platform.isMacOS;
+}

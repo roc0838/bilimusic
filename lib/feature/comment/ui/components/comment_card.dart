@@ -1,0 +1,291 @@
+import 'package:bilimusic/common/components/cached_avatar.dart';
+import 'package:bilimusic/feature/comment/domain/comment_item.dart';
+import 'package:bilimusic/feature/comment/ui/components/comment_picture_gallery.dart';
+import 'package:flutter/material.dart';
+
+class CommentCard extends StatelessWidget {
+  const CommentCard({
+    super.key,
+    required this.item,
+    this.onOpenReplies,
+    this.onToggleLike,
+    this.onTap,
+    this.showReplyPreview = false,
+    this.showReplyEntry = false,
+    this.showTopBadge = true,
+    this.showHiddenBadge = true,
+  });
+
+  final CommentItem item;
+  final VoidCallback? onOpenReplies;
+  final VoidCallback? onToggleLike;
+  final VoidCallback? onTap;
+  final bool showReplyPreview;
+  final bool showReplyEntry;
+  final bool showTopBadge;
+  final bool showHiddenBadge;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              CommonCachedAvatar(
+                imageUrl: item.memberAvatarUrl,
+                size: 36,
+                fallbackIcon: Icons.person_outline_rounded,
+                iconColor: colorScheme.onSurfaceVariant,
+                iconSize: 18,
+                backgroundColor: colorScheme.surfaceContainerHigh,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            item.memberName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        if (showTopBadge && item.isTop)
+                          _CommentBadge(
+                            label: '置顶',
+                            color: colorScheme.primary,
+                          ),
+                        if (showHiddenBadge && item.isHidden)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _CommentBadge(
+                              label: '隐藏',
+                              color: colorScheme.error,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    if (item.message.isNotEmpty)
+                      Text(
+                        item.message,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurface,
+                          height: 1.55,
+                        ),
+                      ),
+                    if (item.message.isEmpty && item.pictures.isEmpty)
+                      Text(
+                        '该评论没有文本内容',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onSurface,
+                          height: 1.55,
+                        ),
+                      ),
+                    if (item.pictures.isNotEmpty) ...<Widget>[
+                      if (item.message.isNotEmpty) const SizedBox(height: 12),
+                      CommentPictureGallery(pictures: item.pictures),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        _CommentMetaText(
+                          text: _formatDateTime(item.publishedAt),
+                        ),
+                        _CommentLikeButton(item: item, onTap: onToggleLike),
+                        _CommentMetaText(text: '回复 ${item.replyCount}'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (showReplyPreview && item.replies.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 14),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(color: colorScheme.surfaceContainerLow),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: item.replies.take(2).map((CommentItem reply) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: RichText(
+                      text: TextSpan(
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          height: 1.5,
+                        ),
+                        children: <InlineSpan>[
+                          TextSpan(
+                            text: '${reply.memberName}: ',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          TextSpan(text: _buildReplyPreviewText(reply)),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
+          if (showReplyEntry && item.replyCount > 0) ...<Widget>[
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0),
+              child: GestureDetector(
+                onTap: onOpenReplies,
+                behavior: HitTestBehavior.opaque,
+                child: Text(
+                  '查看全部 ${item.replyCount} 条回复',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime value) {
+    final String year = value.year.toString().padLeft(4, '0');
+    final String month = value.month.toString().padLeft(2, '0');
+    final String day = value.day.toString().padLeft(2, '0');
+    final String hour = value.hour.toString().padLeft(2, '0');
+    final String minute = value.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute';
+  }
+
+  String _buildReplyPreviewText(CommentItem reply) {
+    final String trimmedMessage = reply.message.trim();
+    final bool hasMessage = trimmedMessage.isNotEmpty;
+    final bool hasPictures = reply.pictures.isNotEmpty;
+
+    String text;
+    if (hasMessage && hasPictures) {
+      text = '$trimmedMessage [图片]';
+    } else if (hasMessage) {
+      text = trimmedMessage;
+    } else if (hasPictures) {
+      text = '[图片]';
+    } else {
+      text = '该回复没有文本内容';
+    }
+
+    return text.length > 20 ? '${text.substring(0, 20)}...' : text;
+  }
+}
+
+class _CommentBadge extends StatelessWidget {
+  const _CommentBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _CommentMetaText extends StatelessWidget {
+  const _CommentMetaText({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return Text(
+      text,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+
+class _CommentLikeButton extends StatelessWidget {
+  const _CommentLikeButton({required this.item, this.onTap});
+
+  final CommentItem item;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool liked = item.isLiked;
+    final Color color = liked
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              liked ? Icons.thumb_up_alt_rounded : Icons.thumb_up_alt_outlined,
+              size: 14,
+              color: color,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '${item.likeCount}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: color,
+                fontWeight: liked ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

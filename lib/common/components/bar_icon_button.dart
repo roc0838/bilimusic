@@ -1,0 +1,95 @@
+import 'package:bilimusic/common/components/icon_and_widget.dart';
+import 'package:flutter/material.dart';
+
+class BarIconButton extends StatefulWidget {
+  const BarIconButton({
+    super.key,
+    required this.onPressed,
+    required this.icon,
+    this.tooltip,
+    this.iconSize = 20,
+    this.width = 30,
+    this.height = 30,
+    this.isActive = false,
+    this.activeColor,
+  });
+
+  final VoidCallback? onPressed;
+  final Object icon;
+  final String? tooltip;
+  final double iconSize;
+  final double width;
+  final double height;
+  final bool isActive;
+  final Color? activeColor;
+
+  @override
+  State<BarIconButton> createState() => _BarIconButtonState();
+}
+
+class _BarIconButtonState extends State<BarIconButton> {
+  bool _isHovered = false;
+  bool _isPressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme colorScheme = theme.colorScheme;
+    final bool isEnabled = widget.onPressed != null;
+
+    final Color iconColor = !isEnabled
+        ? colorScheme.onSurface.withValues(alpha: 0.28)
+        : widget.isActive
+        ? widget.activeColor ?? colorScheme.primary
+        : _isHovered
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant;
+
+    final Widget button = MouseRegion(
+      cursor: isEnabled ? SystemMouseCursors.click : MouseCursor.defer,
+      onEnter: isEnabled ? (_) => setState(() => _isHovered = true) : null,
+      onExit: isEnabled
+          ? (_) => setState(() {
+              _isHovered = false;
+              _isPressed = false;
+            })
+          : null,
+      child: GestureDetector(
+        onTap: widget.onPressed,
+        onTapDown: isEnabled ? (_) => setState(() => _isPressed = true) : null,
+        onTapUp: isEnabled ? (_) => setState(() => _isPressed = false) : null,
+        onTapCancel: isEnabled
+            ? () => setState(() => _isPressed = false)
+            : null,
+        behavior: HitTestBehavior.opaque,
+        child: SizedBox(
+          width: widget.width,
+          height: widget.height,
+          child: Center(
+            child: AnimatedSlide(
+              duration: const Duration(milliseconds: 90),
+              curve: Curves.easeOut,
+              offset: _isPressed ? const Offset(0.05, 0.05) : Offset.zero,
+              child: IconAndWidget(
+                icon: widget.icon,
+                size: widget.iconSize,
+                color: iconColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final String? tooltip = widget.tooltip;
+    if (tooltip == null) {
+      return button;
+    }
+
+    return Tooltip(
+      waitDuration: const Duration(milliseconds: 600),
+      message: tooltip,
+      child: button,
+    );
+  }
+}

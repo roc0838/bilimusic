@@ -1,0 +1,593 @@
+import 'package:bilimusic/common/util/json_util.dart';
+import 'package:bilimusic/common/util/url_util.dart';
+import 'package:bilimusic/common/logger.dart';
+import 'package:bilimusic/core/bili/session/bili_session.dart';
+import 'package:bilimusic/core/net/bili_client.dart';
+import 'package:bilimusic/feature/comment/domain/comment_item.dart';
+import 'package:bilimusic/feature/comment/domain/comment_page_result.dart';
+import 'package:bilimusic/feature/comment/domain/comment_reply_page_result.dart';
+import 'package:bilimusic/feature/comment/domain/comment_sort.dart';
+import 'package:bilimusic/feature/comment/domain/comment_target.dart';
+import 'package:dio/dio.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+part 'bilibili_comment_repository.g.dart';
+
+@riverpod
+BiliCommentRepository biliCommentRepository(Ref ref) {
+  return BiliCommentRepository(ref.read(biliClientProvider.notifier));
+}
+
+class BiliCommentRepository {
+  const BiliCommentRepository(this._client);
+
+  static const String _mainPath = '/x/v2/reply/wbi/main';
+  static const String _replyPath = '/x/v2/reply/reply';
+  static const String _addPath = '/x/v2/reply/add';
+  static const String _likePath = '/x/v2/reply/action';
+  static final AppLogger _logger = AppLogger('BiliCommentRepository');
+
+  final BiliHttpClient _client;
+
+  Future<CommentPageResult> fetchRootComments(
+    CommentTarget target, {
+    int page = 1,
+    String? nextOffset,
+    CommentSort sort = CommentSort.time,
+    bool includeHot = true,
+  }) async {
+    final BiliSession? session = _client.currentSession;
+    final bool shouldSignWithWbi = session?.hasWbiKeys ?? false;
+
+    _logger.d(
+      'fetchRootComments start '
+      'oid=${target.oid} '
+      'type=${target.type} '
+      'sort=$sort '
+      'page=$page '
+      'nextOffset=$nextOffset '
+      'includeHot=$includeHot '
+      'shouldSignWithWbi=$shouldSignWithWbi',
+    );
+
+    return _fetchMainComments(
+      target,
+      sort: sort,
+      nextOffset: nextOffset,
+      includeHot: includeHot,
+      shouldSignWithWbi: shouldSignWithWbi,
+    );
+  }
+
+  Future<CommentReplyPageResult> fetchChildComments(
+    CommentTarget target, {
+    required int rootRpid,
+    int page = 1,
+    int pageSize = 20,
+  }) async {
+    _logger.d(
+      'fetchChildComments start '
+      'oid=${target.oid} '
+      'type=${target.type} '
+      'rootRpid=$rootRpid '
+      'page=$page '
+      'pageSize=$pageSize',
+    );
+
+    final Map<String, dynamic> json = await _client.getJson(
+      _replyPath,
+      queryParameters: <String, dynamic>{
+        'type': target.type,
+        'oid': target.oid,
+        'root': rootRpid,
+        'pn': page,
+        'ps': pageSize,
+      },
+      requiresAuth: false,
+    );
+
+    final Map<String, dynamic> data = _asMap(json['data']);
+    final Map<String, dynamic> pageInfo = _asMapOrEmpty(data['page']);
+    final Map<String, dynamic> config = _asMapOrEmpty(data['config']);
+    final Map<String, dynamic> root = _asMap(data['root']);
+    final List<Map<String, dynamic>> rawReplyMaps = _asListOfMaps(
+      data['replies'],
+    );
+
+    final CommentItem rootItem = _mapCommentItem(root, isTop: true);
+    final List<CommentItem> items = _mapCommentList(
+      rawReplyMaps,
+      sourceLabel: 'child.replies',
+    );
+    final int resolvedPage = _readPositiveInt(pageInfo['num']) ?? page;
+    final int resolvedPageSize = _readPositiveInt(pageInfo['size']) ?? pageSize;
+    final int totalCount =
+        _readNonNegativeInt(pageInfo['count']) ?? items.length;
+    final bool hasMore = resolvedPage * resolvedPageSize < totalCount;
+
+    _logger.d(
+      'fetchChildComments mapped '
+      'items=${items.length} '
+      'page=$resolvedPage '
+      'totalCount=$totalCount '
+      'hasMore=$hasMore',
+    );
+
+    return CommentReplyPageResult(
+      rootItem: rootItem,
+      items: items,
+      page: resolvedPage,
+      pageSize: resolvedPageSize,
+      totalCount: totalCount,
+      hasMore: hasMore,
+      isReadOnly: _readBoolLike(config['read_only']) ?? false,
+    );
+  }
+
+  Future<void> likeComment(
+    CommentTarget target, {
+    required int rpid,
+    required bool liked,
+  }) async {
+    if (rpid <= 0) {
+      throw const BiliCommentException('缺少评论 id，无法点赞');
+    }
+
+    _logger.d('likeComment rpid=$rpid liked=$liked');
+    await _postForm(_likePath, <String, dynamic>{
+      'type': target.type,
+      'oid': target.oid,
+      'rpid': rpid,
+      'action': liked ? 1 : 0,
+    });
+  }
+
+  Future<CommentItem?> addComment(
+    CommentTarget target, {
+    required String message,
+    int root = 0,
+    int parent = 0,
+  }) async {
+    final String content = message.trim();
+    if (content.isEmpty) {
+      throw const BiliCommentException('评论内容不能为空');
+    }
+
+    _logger.d(
+      'addComment oid=${target.oid} type=${target.type} '
+      'root=$root parent=$parent length=${content.length}',
+    );
+
+    final Map<String, dynamic> json =
+        await _postForm(_addPath, <String, dynamic>{
+          'type': target.type,
+          'oid': target.oid,
+          'message': content,
+          'plat': 1,
+          if (root > 0) 'root': root,
+          if (parent > 0) 'parent': parent,
+        });
+
+    final Map<String, dynamic> data = _asMapOrEmpty(json['data']);
+    _logger.d(
+      'addComment response rpid=${data['rpid']} '
+      'needCaptcha=${data['need_captcha']} '
+      'toast=${data['success_toast']}',
+    );
+
+    if (_readBoolLike(data['need_captcha']) ?? false) {
+      throw const BiliCommentException('B站要求完成验证码，请到网页端验证后再评论');
+    }
+
+    final Map<String, dynamic>? reply = _asNullableMap(data['reply']);
+    if (reply == null) {
+      return null;
+    }
+
+    try {
+      return _mapCommentItem(reply);
+    } on Object catch (error, stackTrace) {
+      _logger.e('map added comment failed', error, stackTrace);
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _postForm(
+    String path,
+    Map<String, dynamic> data,
+  ) async {
+    final BiliSession? session = _client.currentSession;
+    if (session == null || !session.isLoggedIn) {
+      throw const BiliCommentException('请先登录后再操作');
+    }
+
+    final Response<dynamic> response = await _client.post<dynamic>(
+      path,
+      data: <String, dynamic>{...data, 'csrf': session.biliJct},
+      options: Options(
+        contentType: Headers.formUrlEncodedContentType,
+        headers: <String, dynamic>{'Cookie': session.cookie},
+      ),
+    );
+
+    final Map<String, dynamic> json = _asMap(response.data);
+    _ensureSuccess(json);
+    return json;
+  }
+
+  void _ensureSuccess(Map<String, dynamic> json) {
+    final int code = (json['code'] as num? ?? -1).toInt();
+    if (code == 0) {
+      return;
+    }
+
+    _logger.e('comment request failed code=$code message=${json['message']}');
+    throw BiliCommentException(_errorMessage(code, json['message']));
+  }
+
+  String _errorMessage(int code, dynamic rawMessage) {
+    switch (code) {
+      case -101:
+        return '请先登录后再操作';
+      case -111:
+        return '登录状态已失效，请重新登录';
+      case 12002:
+      case 12052:
+        return '评论区已关闭';
+      case 12015:
+        return 'B站要求完成验证码，请到网页端验证后再评论';
+      case 12016:
+        return '评论内容包含敏感信息';
+      case 12025:
+        return '评论字数过多';
+      case 12051:
+        return '评论发送过于频繁，请稍后再试';
+    }
+
+    final String message = rawMessage is String ? rawMessage.trim() : '';
+    if (message.isEmpty || message == '0') {
+      return '操作失败（$code）';
+    }
+    return message;
+  }
+
+  Future<CommentPageResult> _fetchMainComments(
+    CommentTarget target, {
+    required CommentSort sort,
+    required String? nextOffset,
+    required bool includeHot,
+    required bool shouldSignWithWbi,
+  }) async {
+    final Map<String, dynamic> queryParameters = <String, dynamic>{
+      'type': target.type,
+      'oid': target.oid,
+      'mode': _mainMode(sort),
+      'plat': 1,
+      'web_location': 1315875,
+      if (nextOffset != null && nextOffset.isNotEmpty)
+        'pagination_str': _buildPaginationStr(nextOffset),
+    };
+
+    _logger.d(
+      'fetchMainComments request '
+      'mode=${queryParameters['mode']} '
+      'pagination=${queryParameters['pagination_str']} '
+      'requiresWbi=$shouldSignWithWbi',
+    );
+
+    final Map<String, dynamic> json = await _client.getJson(
+      _mainPath,
+      queryParameters: queryParameters,
+      requiresAuth: false,
+      requiresWbi: shouldSignWithWbi,
+    );
+
+    final Map<String, dynamic> data = _asMap(json['data']);
+    final Map<String, dynamic> cursor = _asMapOrEmpty(data['cursor']);
+    final Map<String, dynamic> config = _asMapOrEmpty(data['config']);
+    final Map<String, dynamic> folder = _asMapOrEmpty(data['folder']);
+    final Map<String, dynamic> top = _asMapOrEmpty(data['top']);
+    final Map<String, dynamic>? notice = _asNullableMap(data['notice']);
+    final List<Map<String, dynamic>> rawReplyMaps = _asListOfMaps(
+      data['replies'],
+    );
+    final List<Map<String, dynamic>> rawHotMaps = includeHot
+        ? _asListOfMaps(data['hots'])
+        : const <Map<String, dynamic>>[];
+
+    final String? resolvedNextOffset = _readNextOffset(cursor);
+    final bool isEnd = _readBoolLike(cursor['is_end']) ?? false;
+    final int totalCount =
+        _readNonNegativeInt(cursor['all_count']) ?? rawReplyMaps.length;
+
+    _logger.d(
+      'fetchMainComments response '
+      'allCount=${cursor['all_count']} '
+      'isEnd=$isEnd '
+      'rawReplies=${rawReplyMaps.length} '
+      'rawHots=${rawHotMaps.length} '
+      'nextOffset=$resolvedNextOffset '
+      'hasTopUpper=${_asNullableMap(top['upper']) != null} '
+      'hasTopAdmin=${_asNullableMap(top['admin']) != null} '
+      'hasFolded=${folder['has_folded']} '
+      'isFolded=${folder['is_folded']}',
+    );
+
+    final List<CommentItem> items = _mapCommentList(
+      rawReplyMaps,
+      sourceLabel: 'main.replies',
+    );
+
+    final List<CommentItem> hotItems = _mapCommentList(
+      rawHotMaps,
+      sourceLabel: 'main.hots',
+    );
+
+    final CommentItem? topItem = _pickTopComment(top);
+    final List<CommentSort> supportedSorts = _mapSupportedSorts(
+      cursor['support_mode'],
+    );
+
+    _logger.d(
+      'fetchMainComments mapped '
+      'items=${items.length} '
+      'hots=${hotItems.length} '
+      'top=${topItem != null} '
+      'supportedSorts=$supportedSorts '
+      'sortTitle=${cursor['name']}',
+    );
+
+    return CommentPageResult(
+      items: items,
+      hotItems: hotItems,
+      topItem: topItem,
+      page: _readPositiveInt(cursor['next']) ?? 1,
+      pageSize: items.length,
+      totalCount: totalCount,
+      hasMore: !isEnd,
+      nextOffset: resolvedNextOffset,
+      supportedSorts: supportedSorts,
+      sortTitle: cursor['name'] as String?,
+      isEnd: isEnd,
+      hasFolded: _readBoolLike(folder['has_folded']) ?? false,
+      isFolded: _readBoolLike(folder['is_folded']) ?? false,
+      isReadOnly: _readBoolLike(config['read_only']) ?? false,
+      noticeText: _readNoticeText(notice),
+    );
+  }
+
+  List<CommentItem> _mapCommentList(
+    List<Map<String, dynamic>> source, {
+    required String sourceLabel,
+  }) {
+    final List<CommentItem> result = <CommentItem>[];
+
+    for (int index = 0; index < source.length; index++) {
+      final Map<String, dynamic> item = source[index];
+      try {
+        result.add(_mapCommentItem(item));
+      } on Object catch (error, stackTrace) {
+        _logger.e(
+          'map $sourceLabel[$index] failed '
+          'rpid=${item['rpid']} '
+          'oid=${item['oid']} '
+          'keys=${item.keys.toList()}',
+          error,
+          stackTrace,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  int _mainMode(CommentSort sort) {
+    switch (sort) {
+      case CommentSort.hybrid:
+        return 1;
+      case CommentSort.time:
+        return 2;
+      case CommentSort.like:
+        return 3;
+    }
+  }
+
+  String _buildPaginationStr(String nextOffset) {
+    final String escapedOffset = nextOffset.replaceAll('"', r'\"');
+    return '{"offset":"$escapedOffset"}';
+  }
+
+  String? _readNextOffset(Map<String, dynamic> cursor) {
+    final Map<String, dynamic> paginationReply = _asMapOrEmpty(
+      cursor['pagination_reply'],
+    );
+    final String? value = paginationReply['next_offset'] as String?;
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
+  }
+
+  List<CommentSort> _mapSupportedSorts(dynamic value) {
+    final List<dynamic> rawList = value as List<dynamic>? ?? <dynamic>[];
+    final List<CommentSort> result = <CommentSort>[];
+
+    for (final dynamic item in rawList) {
+      final int? rawMode = _readNonNegativeInt(item);
+      if (rawMode == null) {
+        continue;
+      }
+
+      final CommentSort? mapped = _commentSortFromMode(rawMode);
+      if (mapped != null && !result.contains(mapped)) {
+        result.add(mapped);
+      }
+    }
+
+    return result;
+  }
+
+  CommentSort? _commentSortFromMode(int mode) {
+    switch (mode) {
+      case 1:
+        return CommentSort.hybrid;
+      case 2:
+        return CommentSort.time;
+      case 3:
+        return CommentSort.like;
+    }
+    return null;
+  }
+
+  CommentItem? _pickTopComment(Map<String, dynamic> top) {
+    final Map<String, dynamic>? upper = _asNullableMap(top['upper']);
+    final Map<String, dynamic>? admin = _asNullableMap(top['admin']);
+    final Map<String, dynamic>? vote = _asNullableMap(top['vote']);
+    final Map<String, dynamic>? selected = upper ?? admin ?? vote;
+    if (selected == null) {
+      return null;
+    }
+
+    try {
+      return _mapCommentItem(selected, isTop: true);
+    } on Object catch (error, stackTrace) {
+      _logger.e('map main top comment failed', error, stackTrace);
+      return null;
+    }
+  }
+
+  CommentItem _mapCommentItem(Map<String, dynamic> json, {bool isTop = false}) {
+    final Map<String, dynamic> member = _asMapOrEmpty(json['member']);
+    final Map<String, dynamic> content = _asMapOrEmpty(json['content']);
+
+    final List<CommentItem> previewReplies = _asListOfMaps(
+      json['replies'],
+    ).map(_mapCommentItem).toList();
+
+    final int timestamp = _readNonNegativeInt(json['ctime']) ?? 0;
+
+    return CommentItem(
+      rpid: _readNonNegativeInt(json['rpid']) ?? 0,
+      oid: _readNonNegativeInt(json['oid']) ?? 0,
+      type: _readNonNegativeInt(json['type']) ?? 0,
+      root: _readNonNegativeInt(json['root']) ?? 0,
+      parent: _readNonNegativeInt(json['parent']) ?? 0,
+      replyCount:
+          _readNonNegativeInt(json['count']) ??
+          _readNonNegativeInt(json['rcount']) ??
+          previewReplies.length,
+      likeCount: _readNonNegativeInt(json['like']) ?? 0,
+      action: _readNonNegativeInt(json['action']) ?? 0,
+      publishedAt: DateTime.fromMillisecondsSinceEpoch(timestamp * 1000),
+      message: content['message'] as String? ?? '',
+      pictures: _asListOfMaps(
+        content['pictures'],
+      ).map(_mapCommentPicture).toList(),
+      memberName: member['uname'] as String? ?? '未知用户',
+      memberAvatarUrl: normalizeHttpUrl(member['avatar'] as String? ?? ''),
+      isTop: isTop,
+      isHidden: _readBoolLike(json['invisible']) ?? false,
+      replies: previewReplies,
+    );
+  }
+
+  CommentPicture _mapCommentPicture(Map<String, dynamic> json) {
+    return CommentPicture(
+      imageUrl: normalizeHttpUrl(json['img_src'] as String? ?? ''),
+      width: _readPositiveInt(json['img_width']),
+      height: _readPositiveInt(json['img_height']),
+      sizeKb: _readPositiveInt(json['img_size']),
+    );
+  }
+
+  String? _readNoticeText(Map<String, dynamic>? notice) {
+    if (notice == null) {
+      return null;
+    }
+    final String text = notice['content'] as String? ?? '';
+    final String trimmed = text.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  bool? _readBoolLike(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    if (value is String) {
+      if (value == 'true' || value == '1') {
+        return true;
+      }
+      if (value == 'false' || value == '0') {
+        return false;
+      }
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _asMap(dynamic value) {
+    try {
+      return asStringKeyedMap(value);
+    } on FormatException {
+      throw const BiliCommentException('Unexpected comment response format.');
+    }
+  }
+
+  Map<String, dynamic>? _asNullableMap(dynamic value) {
+    return asNullableStringKeyedMap(value);
+  }
+
+  Map<String, dynamic> _asMapOrEmpty(dynamic value) {
+    return asStringKeyedMapOrEmpty(value);
+  }
+
+  List<Map<String, dynamic>> _asListOfMaps(dynamic value) {
+    return asListOfMaps(value);
+  }
+
+  int? _readPositiveInt(dynamic value) {
+    if (value is num) {
+      final int intValue = value.toInt();
+      return intValue > 0 ? intValue : null;
+    }
+    if (value is String) {
+      final int? parsed = int.tryParse(value);
+      if (parsed != null && parsed > 0) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  int? _readNonNegativeInt(dynamic value) {
+    if (value is num) {
+      final int intValue = value.toInt();
+      return intValue >= 0 ? intValue : null;
+    }
+    if (value is String) {
+      final int? parsed = int.tryParse(value);
+      if (parsed != null && parsed >= 0) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+}
+
+class BiliCommentException implements Exception {
+  const BiliCommentException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+String commentErrorText(Object error) {
+  if (error is BiliCommentException) {
+    return error.message;
+  }
+  return '操作失败，请稍后重试';
+}

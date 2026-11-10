@@ -1,0 +1,319 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+// coverage:ignore-file
+// ignore_for_file: type=lint
+// ignore_for_file: unused_element, deprecated_member_use, deprecated_member_use_from_same_package, use_function_type_syntax_for_parameters, unnecessary_const, avoid_init_to_null, invalid_override_different_default_values_named, prefer_expression_function_bodies, annotate_overrides, invalid_annotation_target, unnecessary_question_mark
+
+part of 'search_state.dart';
+
+// **************************************************************************
+// FreezedGenerator
+// **************************************************************************
+
+// dart format off
+T _$identity<T>(T value) => value;
+/// @nodoc
+mixin _$SearchState {
+
+ String get query; String? get submittedQuery; SearchType get type; SearchSort get sort; List<String> get recentKeywords; List<String> get suggestions; PagedState<SearchResultItem> get videoResults; PagedState<SearchUserItem> get userResultsPage; bool get isLoading; bool get isLoadingSuggestions; String? get errorMessage; String? get suggestionsErrorMessage; String? get loadMoreErrorMessage;
+/// Create a copy of SearchState
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$SearchStateCopyWith<SearchState> get copyWith => _$SearchStateCopyWithImpl<SearchState>(this as SearchState, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SearchState&&(identical(other.query, query) || other.query == query)&&(identical(other.submittedQuery, submittedQuery) || other.submittedQuery == submittedQuery)&&(identical(other.type, type) || other.type == type)&&(identical(other.sort, sort) || other.sort == sort)&&const DeepCollectionEquality().equals(other.recentKeywords, recentKeywords)&&const DeepCollectionEquality().equals(other.suggestions, suggestions)&&(identical(other.videoResults, videoResults) || other.videoResults == videoResults)&&(identical(other.userResultsPage, userResultsPage) || other.userResultsPage == userResultsPage)&&(identical(other.isLoading, isLoading) || other.isLoading == isLoading)&&(identical(other.isLoadingSuggestions, isLoadingSuggestions) || other.isLoadingSuggestions == isLoadingSuggestions)&&(identical(other.errorMessage, errorMessage) || other.errorMessage == errorMessage)&&(identical(other.suggestionsErrorMessage, suggestionsErrorMessage) || other.suggestionsErrorMessage == suggestionsErrorMessage)&&(identical(other.loadMoreErrorMessage, loadMoreErrorMessage) || other.loadMoreErrorMessage == loadMoreErrorMessage));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,query,submittedQuery,type,sort,const DeepCollectionEquality().hash(recentKeywords),const DeepCollectionEquality().hash(suggestions),videoResults,userResultsPage,isLoading,isLoadingSuggestions,errorMessage,suggestionsErrorMessage,loadMoreErrorMessage);
+
+@override
+String toString() {
+  return 'SearchState(query: $query, submittedQuery: $submittedQuery, type: $type, sort: $sort, recentKeywords: $recentKeywords, suggestions: $suggestions, videoResults: $videoResults, userResultsPage: $userResultsPage, isLoading: $isLoading, isLoadingSuggestions: $isLoadingSuggestions, errorMessage: $errorMessage, suggestionsErrorMessage: $suggestionsErrorMessage, loadMoreErrorMessage: $loadMoreErrorMessage)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $SearchStateCopyWith<$Res>  {
+  factory $SearchStateCopyWith(SearchState value, $Res Function(SearchState) _then) = _$SearchStateCopyWithImpl;
+@useResult
+$Res call({
+ String query, String? submittedQuery, SearchType type, SearchSort sort, List<String> recentKeywords, List<String> suggestions, PagedState<SearchResultItem> videoResults, PagedState<SearchUserItem> userResultsPage, bool isLoading, bool isLoadingSuggestions, String? errorMessage, String? suggestionsErrorMessage, String? loadMoreErrorMessage
+});
+
+
+
+
+}
+/// @nodoc
+class _$SearchStateCopyWithImpl<$Res>
+    implements $SearchStateCopyWith<$Res> {
+  _$SearchStateCopyWithImpl(this._self, this._then);
+
+  final SearchState _self;
+  final $Res Function(SearchState) _then;
+
+/// Create a copy of SearchState
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? query = null,Object? submittedQuery = freezed,Object? type = null,Object? sort = null,Object? recentKeywords = null,Object? suggestions = null,Object? videoResults = null,Object? userResultsPage = null,Object? isLoading = null,Object? isLoadingSuggestions = null,Object? errorMessage = freezed,Object? suggestionsErrorMessage = freezed,Object? loadMoreErrorMessage = freezed,}) {
+  return _then(_self.copyWith(
+query: null == query ? _self.query : query // ignore: cast_nullable_to_non_nullable
+as String,submittedQuery: freezed == submittedQuery ? _self.submittedQuery : submittedQuery // ignore: cast_nullable_to_non_nullable
+as String?,type: null == type ? _self.type : type // ignore: cast_nullable_to_non_nullable
+as SearchType,sort: null == sort ? _self.sort : sort // ignore: cast_nullable_to_non_nullable
+as SearchSort,recentKeywords: null == recentKeywords ? _self.recentKeywords : recentKeywords // ignore: cast_nullable_to_non_nullable
+as List<String>,suggestions: null == suggestions ? _self.suggestions : suggestions // ignore: cast_nullable_to_non_nullable
+as List<String>,videoResults: null == videoResults ? _self.videoResults : videoResults // ignore: cast_nullable_to_non_nullable
+as PagedState<SearchResultItem>,userResultsPage: null == userResultsPage ? _self.userResultsPage : userResultsPage // ignore: cast_nullable_to_non_nullable
+as PagedState<SearchUserItem>,isLoading: null == isLoading ? _self.isLoading : isLoading // ignore: cast_nullable_to_non_nullable
+as bool,isLoadingSuggestions: null == isLoadingSuggestions ? _self.isLoadingSuggestions : isLoadingSuggestions // ignore: cast_nullable_to_non_nullable
+as bool,errorMessage: freezed == errorMessage ? _self.errorMessage : errorMessage // ignore: cast_nullable_to_non_nullable
+as String?,suggestionsErrorMessage: freezed == suggestionsErrorMessage ? _self.suggestionsErrorMessage : suggestionsErrorMessage // ignore: cast_nullable_to_non_nullable
+as String?,loadMoreErrorMessage: freezed == loadMoreErrorMessage ? _self.loadMoreErrorMessage : loadMoreErrorMessage // ignore: cast_nullable_to_non_nullable
+as String?,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [SearchState].
+extension SearchStatePatterns on SearchState {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _SearchState value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _SearchState() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _SearchState value)  $default,){
+final _that = this;
+switch (_that) {
+case _SearchState():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _SearchState value)?  $default,){
+final _that = this;
+switch (_that) {
+case _SearchState() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String query,  String? submittedQuery,  SearchType type,  SearchSort sort,  List<String> recentKeywords,  List<String> suggestions,  PagedState<SearchResultItem> videoResults,  PagedState<SearchUserItem> userResultsPage,  bool isLoading,  bool isLoadingSuggestions,  String? errorMessage,  String? suggestionsErrorMessage,  String? loadMoreErrorMessage)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _SearchState() when $default != null:
+return $default(_that.query,_that.submittedQuery,_that.type,_that.sort,_that.recentKeywords,_that.suggestions,_that.videoResults,_that.userResultsPage,_that.isLoading,_that.isLoadingSuggestions,_that.errorMessage,_that.suggestionsErrorMessage,_that.loadMoreErrorMessage);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String query,  String? submittedQuery,  SearchType type,  SearchSort sort,  List<String> recentKeywords,  List<String> suggestions,  PagedState<SearchResultItem> videoResults,  PagedState<SearchUserItem> userResultsPage,  bool isLoading,  bool isLoadingSuggestions,  String? errorMessage,  String? suggestionsErrorMessage,  String? loadMoreErrorMessage)  $default,) {final _that = this;
+switch (_that) {
+case _SearchState():
+return $default(_that.query,_that.submittedQuery,_that.type,_that.sort,_that.recentKeywords,_that.suggestions,_that.videoResults,_that.userResultsPage,_that.isLoading,_that.isLoadingSuggestions,_that.errorMessage,_that.suggestionsErrorMessage,_that.loadMoreErrorMessage);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String query,  String? submittedQuery,  SearchType type,  SearchSort sort,  List<String> recentKeywords,  List<String> suggestions,  PagedState<SearchResultItem> videoResults,  PagedState<SearchUserItem> userResultsPage,  bool isLoading,  bool isLoadingSuggestions,  String? errorMessage,  String? suggestionsErrorMessage,  String? loadMoreErrorMessage)?  $default,) {final _that = this;
+switch (_that) {
+case _SearchState() when $default != null:
+return $default(_that.query,_that.submittedQuery,_that.type,_that.sort,_that.recentKeywords,_that.suggestions,_that.videoResults,_that.userResultsPage,_that.isLoading,_that.isLoadingSuggestions,_that.errorMessage,_that.suggestionsErrorMessage,_that.loadMoreErrorMessage);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+
+
+class _SearchState extends SearchState {
+  const _SearchState({this.query = '', this.submittedQuery, this.type = SearchType.video, this.sort = SearchSort.comprehensive, final  List<String> recentKeywords = const <String>[], final  List<String> suggestions = const <String>[], this.videoResults = const PagedState<SearchResultItem>(), this.userResultsPage = const PagedState<SearchUserItem>(), this.isLoading = false, this.isLoadingSuggestions = false, this.errorMessage, this.suggestionsErrorMessage, this.loadMoreErrorMessage}): _recentKeywords = recentKeywords,_suggestions = suggestions,super._();
+  
+
+@override@JsonKey() final  String query;
+@override final  String? submittedQuery;
+@override@JsonKey() final  SearchType type;
+@override@JsonKey() final  SearchSort sort;
+ final  List<String> _recentKeywords;
+@override@JsonKey() List<String> get recentKeywords {
+  if (_recentKeywords is EqualUnmodifiableListView) return _recentKeywords;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_recentKeywords);
+}
+
+ final  List<String> _suggestions;
+@override@JsonKey() List<String> get suggestions {
+  if (_suggestions is EqualUnmodifiableListView) return _suggestions;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_suggestions);
+}
+
+@override@JsonKey() final  PagedState<SearchResultItem> videoResults;
+@override@JsonKey() final  PagedState<SearchUserItem> userResultsPage;
+@override@JsonKey() final  bool isLoading;
+@override@JsonKey() final  bool isLoadingSuggestions;
+@override final  String? errorMessage;
+@override final  String? suggestionsErrorMessage;
+@override final  String? loadMoreErrorMessage;
+
+/// Create a copy of SearchState
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$SearchStateCopyWith<_SearchState> get copyWith => __$SearchStateCopyWithImpl<_SearchState>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _SearchState&&(identical(other.query, query) || other.query == query)&&(identical(other.submittedQuery, submittedQuery) || other.submittedQuery == submittedQuery)&&(identical(other.type, type) || other.type == type)&&(identical(other.sort, sort) || other.sort == sort)&&const DeepCollectionEquality().equals(other._recentKeywords, _recentKeywords)&&const DeepCollectionEquality().equals(other._suggestions, _suggestions)&&(identical(other.videoResults, videoResults) || other.videoResults == videoResults)&&(identical(other.userResultsPage, userResultsPage) || other.userResultsPage == userResultsPage)&&(identical(other.isLoading, isLoading) || other.isLoading == isLoading)&&(identical(other.isLoadingSuggestions, isLoadingSuggestions) || other.isLoadingSuggestions == isLoadingSuggestions)&&(identical(other.errorMessage, errorMessage) || other.errorMessage == errorMessage)&&(identical(other.suggestionsErrorMessage, suggestionsErrorMessage) || other.suggestionsErrorMessage == suggestionsErrorMessage)&&(identical(other.loadMoreErrorMessage, loadMoreErrorMessage) || other.loadMoreErrorMessage == loadMoreErrorMessage));
+}
+
+
+@override
+int get hashCode => Object.hash(runtimeType,query,submittedQuery,type,sort,const DeepCollectionEquality().hash(_recentKeywords),const DeepCollectionEquality().hash(_suggestions),videoResults,userResultsPage,isLoading,isLoadingSuggestions,errorMessage,suggestionsErrorMessage,loadMoreErrorMessage);
+
+@override
+String toString() {
+  return 'SearchState(query: $query, submittedQuery: $submittedQuery, type: $type, sort: $sort, recentKeywords: $recentKeywords, suggestions: $suggestions, videoResults: $videoResults, userResultsPage: $userResultsPage, isLoading: $isLoading, isLoadingSuggestions: $isLoadingSuggestions, errorMessage: $errorMessage, suggestionsErrorMessage: $suggestionsErrorMessage, loadMoreErrorMessage: $loadMoreErrorMessage)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$SearchStateCopyWith<$Res> implements $SearchStateCopyWith<$Res> {
+  factory _$SearchStateCopyWith(_SearchState value, $Res Function(_SearchState) _then) = __$SearchStateCopyWithImpl;
+@override @useResult
+$Res call({
+ String query, String? submittedQuery, SearchType type, SearchSort sort, List<String> recentKeywords, List<String> suggestions, PagedState<SearchResultItem> videoResults, PagedState<SearchUserItem> userResultsPage, bool isLoading, bool isLoadingSuggestions, String? errorMessage, String? suggestionsErrorMessage, String? loadMoreErrorMessage
+});
+
+
+
+
+}
+/// @nodoc
+class __$SearchStateCopyWithImpl<$Res>
+    implements _$SearchStateCopyWith<$Res> {
+  __$SearchStateCopyWithImpl(this._self, this._then);
+
+  final _SearchState _self;
+  final $Res Function(_SearchState) _then;
+
+/// Create a copy of SearchState
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? query = null,Object? submittedQuery = freezed,Object? type = null,Object? sort = null,Object? recentKeywords = null,Object? suggestions = null,Object? videoResults = null,Object? userResultsPage = null,Object? isLoading = null,Object? isLoadingSuggestions = null,Object? errorMessage = freezed,Object? suggestionsErrorMessage = freezed,Object? loadMoreErrorMessage = freezed,}) {
+  return _then(_SearchState(
+query: null == query ? _self.query : query // ignore: cast_nullable_to_non_nullable
+as String,submittedQuery: freezed == submittedQuery ? _self.submittedQuery : submittedQuery // ignore: cast_nullable_to_non_nullable
+as String?,type: null == type ? _self.type : type // ignore: cast_nullable_to_non_nullable
+as SearchType,sort: null == sort ? _self.sort : sort // ignore: cast_nullable_to_non_nullable
+as SearchSort,recentKeywords: null == recentKeywords ? _self._recentKeywords : recentKeywords // ignore: cast_nullable_to_non_nullable
+as List<String>,suggestions: null == suggestions ? _self._suggestions : suggestions // ignore: cast_nullable_to_non_nullable
+as List<String>,videoResults: null == videoResults ? _self.videoResults : videoResults // ignore: cast_nullable_to_non_nullable
+as PagedState<SearchResultItem>,userResultsPage: null == userResultsPage ? _self.userResultsPage : userResultsPage // ignore: cast_nullable_to_non_nullable
+as PagedState<SearchUserItem>,isLoading: null == isLoading ? _self.isLoading : isLoading // ignore: cast_nullable_to_non_nullable
+as bool,isLoadingSuggestions: null == isLoadingSuggestions ? _self.isLoadingSuggestions : isLoadingSuggestions // ignore: cast_nullable_to_non_nullable
+as bool,errorMessage: freezed == errorMessage ? _self.errorMessage : errorMessage // ignore: cast_nullable_to_non_nullable
+as String?,suggestionsErrorMessage: freezed == suggestionsErrorMessage ? _self.suggestionsErrorMessage : suggestionsErrorMessage // ignore: cast_nullable_to_non_nullable
+as String?,loadMoreErrorMessage: freezed == loadMoreErrorMessage ? _self.loadMoreErrorMessage : loadMoreErrorMessage // ignore: cast_nullable_to_non_nullable
+as String?,
+  ));
+}
+
+
+}
+
+// dart format on

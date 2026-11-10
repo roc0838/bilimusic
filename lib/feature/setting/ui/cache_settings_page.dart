@@ -1,0 +1,470 @@
+import 'package:bilimusic/common/util/color_util.dart';
+import 'package:bilimusic/common/util/format_util.dart';
+import 'package:bilimusic/common/util/toast_util.dart';
+import 'package:bilimusic/core/cache/cache_util.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:lottie/lottie.dart';
+
+class CacheSettingsPage extends StatefulWidget {
+  const CacheSettingsPage({super.key});
+
+  @override
+  State<CacheSettingsPage> createState() => _CacheSettingsPageState();
+}
+
+class _CacheSettingsPageState extends State<CacheSettingsPage>
+    with SingleTickerProviderStateMixin {
+  int _imageCacheBytes = 0;
+  int _audioCacheBytes = 0;
+  int _lyricsCacheBytes = 0;
+  int _metadataCacheBytes = 0;
+  bool _imageSelected = true;
+  bool _audioSelected = true;
+  bool _lyricsSelected = true;
+  bool _metadataSelected = true;
+  bool _isLoading = true;
+  bool _isClearing = false;
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCacheSizes();
+    _controller = AnimationController(vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  int get _totalCacheBytes =>
+      _imageCacheBytes +
+      _audioCacheBytes +
+      _lyricsCacheBytes +
+      _metadataCacheBytes;
+
+  int get _selectedCacheBytes {
+    int total = 0;
+    if (_imageSelected) {
+      total += _imageCacheBytes;
+    }
+    if (_audioSelected) {
+      total += _audioCacheBytes;
+    }
+    if (_lyricsSelected) {
+      total += _lyricsCacheBytes;
+    }
+    if (_metadataSelected) {
+      total += _metadataCacheBytes;
+    }
+    return total;
+  }
+
+  bool get _hasSelectedCache => _selectedCacheBytes > 0;
+
+  Future<void> _loadCacheSizes() async {
+    final List<int> sizes = await Future.wait<int>(<Future<int>>[
+      CacheUtil.getImageCacheSizeBytes(),
+      CacheUtil.getAudioCacheSizeBytes(),
+      CacheUtil.getLyricsCacheSizeBytes(),
+      CacheUtil.getMetadataCacheSizeBytes(),
+    ]);
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _imageCacheBytes = sizes[0];
+      _audioCacheBytes = sizes[1];
+      _lyricsCacheBytes = sizes[2];
+      _metadataCacheBytes = sizes[3];
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _toggleAndClearSelected() async {
+    if (!_hasSelectedCache || _isClearing) {
+      return;
+    }
+
+    final bool shouldClear =
+        await _showClearCacheDialog(
+          context,
+          cacheSizeLabel: formatBytes(_selectedCacheBytes),
+        ) ??
+        false;
+    if (!shouldClear) {
+      return;
+    }
+
+    setState(() {
+      _isClearing = true;
+    });
+
+    try {
+      final List<Future<void>> tasks = <Future<void>>[];
+      if (_imageSelected) {
+        tasks.add(CacheUtil.clearImageCache());
+      }
+      if (_audioSelected) {
+        tasks.add(CacheUtil.clearAudioCache());
+      }
+      if (_lyricsSelected) {
+        tasks.add(CacheUtil.clearLyricsCache());
+      }
+      if (_metadataSelected) {
+        tasks.add(CacheUtil.clearMetadataCache());
+      }
+
+      await Future.wait<void>(tasks);
+      await _loadCacheSizes();
+
+      if (mounted && _totalCacheBytes <= 0) {
+        _controller.forward(from: 0.0);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      ToastUtil.show('所选缓存已清理');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isClearing = false;
+        });
+      }
+    }
+  }
+
+  void _toggleImageSelected() {
+    setState(() {
+      _imageSelected = !_imageSelected;
+    });
+  }
+
+  void _toggleAudioSelected() {
+    setState(() {
+      _audioSelected = !_audioSelected;
+    });
+  }
+
+  void _toggleLyricsSelected() {
+    setState(() {
+      _lyricsSelected = !_lyricsSelected;
+    });
+  }
+
+  void _toggleMetadataSelected() {
+    setState(() {
+      _metadataSelected = !_metadataSelected;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('缓存管理')),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        children: <Widget>[
+          Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(
+                    height: 240,
+                    child: Center(
+                      child: SizedBox.square(
+                        dimension: 240,
+                        child: _totalCacheBytes > 0
+                            ? PieChart(
+                                PieChartData(
+                                  sectionsSpace: 2,
+                                  centerSpaceRadius: 50,
+                                  sections: [
+                                    PieChartSectionData(
+                                      title: _imageCacheBytes > 0
+                                          ? '图片 ${(_imageCacheBytes / _totalCacheBytes * 100).toStringAsFixed(0)}%'
+                                          : null,
+                                      value: _imageSelected
+                                          ? (_imageCacheBytes /
+                                                    _totalCacheBytes *
+                                                    100)
+                                                .toDouble()
+                                          : 0,
+                                      titleStyle: TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      color: ColorUtil.getAnalogous(
+                                        theme.colorScheme.primary,
+                                      )[4],
+                                      radius: 45,
+                                    ),
+                                    PieChartSectionData(
+                                      title: _audioCacheBytes > 0
+                                          ? '音频 ${(_audioCacheBytes / _totalCacheBytes * 100).toStringAsFixed(0)}%'
+                                          : null,
+                                      value: _audioSelected
+                                          ? (_audioCacheBytes /
+                                                    _totalCacheBytes *
+                                                    100)
+                                                .toDouble()
+                                          : 0,
+                                      color: ColorUtil.getShade(
+                                        theme.colorScheme.primary,
+                                        400,
+                                      ),
+                                      titleStyle: TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      radius: 45,
+                                    ),
+                                    PieChartSectionData(
+                                      title: _lyricsCacheBytes > 0
+                                          ? '歌词 ${(_lyricsCacheBytes / _totalCacheBytes * 100).toStringAsFixed(0)}%'
+                                          : null,
+                                      value: _lyricsSelected
+                                          ? (_lyricsCacheBytes /
+                                                    _totalCacheBytes *
+                                                    100)
+                                                .toDouble()
+                                          : 0,
+                                      color: ColorUtil.getShade(
+                                        theme.colorScheme.primary,
+                                        500,
+                                      ),
+                                      titleStyle: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      radius: 45,
+                                    ),
+                                    PieChartSectionData(
+                                      title: _metadataCacheBytes > 0
+                                          ? '元信息 ${(_metadataCacheBytes / _totalCacheBytes * 100).toStringAsFixed(0)}%'
+                                          : null,
+                                      value: _metadataSelected
+                                          ? (_metadataCacheBytes /
+                                                    _totalCacheBytes *
+                                                    100)
+                                                .toDouble()
+                                          : 0,
+                                      color: ColorUtil.getShade(
+                                        theme.colorScheme.primary,
+                                        700,
+                                      ),
+                                      titleStyle: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                      radius: 45,
+                                    ),
+                                  ],
+                                ),
+                                duration: const Duration(milliseconds: 800),
+                                curve: Curves.easeInOut,
+                              )
+                            : Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Positioned(
+                                    top: -80,
+                                    child: Lottie.asset(
+                                      'assets/lottie/Done.json',
+                                      width: 360,
+                                      height: 240,
+                                      fit: BoxFit.fitWidth,
+                                      controller: _controller,
+                                      repeat: false,
+                                      onLoaded: (composition) {
+                                        _controller
+                                          ..duration = composition.duration
+                                          ..forward(); // 加载完立即播放一次
+                                      },
+                                    ),
+                                  ),
+                                  Positioned(
+                                    bottom: 24,
+                                    child: Text(
+                                      '缓存已清理',
+                                      style: TextStyle(
+                                        color:
+                                            theme.textTheme.bodyMedium?.color ??
+                                            Colors.grey,
+                                        fontSize: 24,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    margin: EdgeInsets.zero,
+                    child: Column(
+                      children: <Widget>[
+                        _CacheCategoryTile(
+                          icon: Icons.image_outlined,
+                          title: '图片',
+                          valueLabel: formatBytes(_imageCacheBytes),
+                          selected: _imageSelected,
+                          enabled: !_isLoading && !_isClearing,
+                          onTap: _toggleImageSelected,
+                        ),
+                        const Divider(height: 1),
+                        _CacheCategoryTile(
+                          icon: Icons.audiotrack_outlined,
+                          title: '音频',
+                          valueLabel: formatBytes(_audioCacheBytes),
+                          selected: _audioSelected,
+                          enabled: !_isLoading && !_isClearing,
+                          onTap: _toggleAudioSelected,
+                        ),
+                        const Divider(height: 1),
+                        _CacheCategoryTile(
+                          icon: Icons.lyrics_outlined,
+                          title: '歌词',
+                          valueLabel: formatBytes(_lyricsCacheBytes),
+                          selected: _lyricsSelected,
+                          enabled: !_isLoading && !_isClearing,
+                          onTap: _toggleLyricsSelected,
+                        ),
+                        const Divider(height: 1),
+                        _CacheCategoryTile(
+                          icon: Icons.info_outline,
+                          title: '元信息',
+                          valueLabel: formatBytes(_metadataCacheBytes),
+                          selected: _metadataSelected,
+                          enabled: !_isLoading && !_isClearing,
+                          onTap: _toggleMetadataSelected,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: _hasSelectedCache && !_isLoading && !_isClearing
+                        ? _toggleAndClearSelected
+                        : null,
+                    child: _isClearing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text('清空所选缓存 ${formatBytes(_selectedCacheBytes)}'),
+                  ),
+                  if (kDebugMode)
+                    Column(
+                      children: [
+                        Row(
+                          children: [
+                            // Play backward
+                            IconButton(
+                              icon: const Icon(Icons.arrow_left),
+                              onPressed: () {
+                                _controller.reverse();
+                              },
+                            ),
+                            // Pause
+                            IconButton(
+                              icon: const Icon(Icons.pause),
+                              onPressed: () {
+                                _controller.stop();
+                              },
+                            ),
+                            // Play forward
+                            IconButton(
+                              icon: const Icon(Icons.arrow_right),
+                              onPressed: () {
+                                _controller.forward();
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CacheCategoryTile extends StatelessWidget {
+  const _CacheCategoryTile({
+    required this.icon,
+    required this.title,
+    required this.valueLabel,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String valueLabel;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      enabled: enabled,
+      leading: Icon(icon),
+      title: Text(title),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(valueLabel, style: theme.textTheme.bodyMedium),
+          const SizedBox(width: 12),
+          Checkbox(value: selected, onChanged: enabled ? (_) => onTap() : null),
+        ],
+      ),
+      onTap: enabled ? onTap : null,
+    );
+  }
+}
+
+Future<bool?> _showClearCacheDialog(
+  BuildContext context, {
+  required String cacheSizeLabel,
+}) {
+  return showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text('确认清空所选缓存吗？'),
+        content: Text('将清理 $cacheSizeLabel 的图片、音频、歌词与元信息缓存，后续使用时会重新下载或重新拉取。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('确认'),
+          ),
+        ],
+      );
+    },
+  );
+}

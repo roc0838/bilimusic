@@ -1,0 +1,29 @@
+import 'package:bilimusic/common/domain/meta_lyrics.dart';
+import 'package:bilimusic/common/domain/collection_kind.dart';
+import 'package:bilimusic/feature/favorites/domain/favorite_collection.dart';
+import 'package:bilimusic/feature/favorites/domain/favorite_entry.dart';
+import 'package:bilimusic/feature/favorites/domain/favorite_membership.dart';
+import 'package:bilimusic/feature/metadata/domain/metadata.dart';
+import 'package:bilimusic/feature/player/domain/persisted_playback_queue.dart';
+import 'package:bilimusic/feature/player/domain/player_state.dart';
+import 'package:bilimusic/feature/recent/domain/recent_playback_entry.dart';
+import 'package:bilimusic/feature/up/domain/favorite_up.dart';
+import 'package:bilimusic/feature/favorites/domain/favorited_season.dart';
+import 'package:hive_ce/hive.dart';
+
+@GenerateAdapters(<AdapterSpec<dynamic>>[
+  AdapterSpec<FavoriteCollection>(),
+  AdapterSpec<FavoriteCollectionSource>(),
+  AdapterSpec<FavoriteEntry>(),
+  AdapterSpec<FavoriteMembership>(),
+  AdapterSpec<PlayerQueueMode>(),
+  AdapterSpec<PersistedPlayableItem>(),
+  AdapterSpec<PersistedPlaybackQueue>(),
+  AdapterSpec<RecentPlaybackEntry>(),
+  AdapterSpec<FavoriteUp>(),
+  AdapterSpec<FavoritedSeason>(),
+  AdapterSpec<MetaLyrics>(),
+  AdapterSpec<Metadata>(),
+  AdapterSpec<CollectionKind>(),
+])
+part 'hive_adapters.g.dart';

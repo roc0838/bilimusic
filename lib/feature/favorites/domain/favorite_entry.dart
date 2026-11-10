@@ -1,0 +1,70 @@
+import 'package:bilimusic/feature/favorites/domain/favorite_collection.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'favorite_entry.freezed.dart';
+part 'favorite_entry.g.dart';
+
+@freezed
+abstract class FavoriteEntry with _$FavoriteEntry {
+  const FavoriteEntry._();
+
+  const factory FavoriteEntry({
+    required String itemId,
+    required int aid,
+    required String bvid,
+    required String title,
+    required String author,
+    required String coverUrl,
+    int? ownerMid,
+    int? cid,
+    int? page,
+    String? pageTitle,
+    String? durationText,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+  }) = _FavoriteEntry;
+
+  factory FavoriteEntry.fromJson(Map<String, dynamic> json) =>
+      _$FavoriteEntryFromJson(json);
+
+  factory FavoriteEntry.fromPlayableItem(PlayableItem item, {DateTime? now}) {
+    final DateTime timestamp = now ?? DateTime.now();
+    return FavoriteEntry(
+      itemId: item.stableId,
+      aid: item.aid,
+      bvid: item.bvid,
+      title: item.title,
+      author: item.author,
+      coverUrl: item.coverUrl,
+      ownerMid: item.ownerMid,
+      cid: item.cid,
+      page: item.page,
+      pageTitle: item.pageTitle,
+      durationText: item.durationText,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    );
+  }
+
+  PlayableItem toPlayableItem({FavoriteCollection? collection}) {
+    final PlayableItem item = PlayableItem(
+      aid: aid,
+      bvid: bvid,
+      title: title,
+      author: author,
+      coverUrl: coverUrl,
+      ownerMid: ownerMid,
+      cid: cid,
+      page: page,
+      pageTitle: pageTitle,
+      durationText: durationText,
+    );
+    return collection?.contextualize(item) ?? item;
+  }
+
+  String get contentId {
+    final String videoId = bvid.isNotEmpty ? 'bvid:$bvid' : 'aid:$aid';
+    return '$videoId:page:${page ?? 1}';
+  }
+}

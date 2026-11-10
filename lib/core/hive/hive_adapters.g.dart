@@ -1,0 +1,737 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'hive_adapters.dart';
+
+// **************************************************************************
+// AdaptersGenerator
+// **************************************************************************
+
+class FavoriteCollectionAdapter extends TypeAdapter<FavoriteCollection> {
+  @override
+  final typeId = 1;
+
+  @override
+  FavoriteCollection read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoriteCollection(
+      id: fields[0] as String,
+      name: fields[1] as String,
+      source: fields[5] == null
+          ? FavoriteCollectionSource.local
+          : fields[5] as FavoriteCollectionSource,
+      kind: fields[11] == null
+          ? CollectionKind.music
+          : fields[11] as CollectionKind,
+      isSystem: fields[2] == null ? false : fields[2] as bool,
+      remoteId: fields[6] as String?,
+      coverUrl: fields[7] as String?,
+      itemCount: fields[8] == null ? 0 : (fields[8] as num).toInt(),
+      isManagedByApp: fields[9] == null ? false : fields[9] as bool,
+      lastSyncedAt: fields[10] as DateTime?,
+      createdAt: fields[3] as DateTime,
+      updatedAt: fields[4] as DateTime,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteCollection obj) {
+    writer
+      ..writeByte(12)
+      ..writeByte(0)
+      ..write(obj.id)
+      ..writeByte(1)
+      ..write(obj.name)
+      ..writeByte(2)
+      ..write(obj.isSystem)
+      ..writeByte(3)
+      ..write(obj.createdAt)
+      ..writeByte(4)
+      ..write(obj.updatedAt)
+      ..writeByte(5)
+      ..write(obj.source)
+      ..writeByte(6)
+      ..write(obj.remoteId)
+      ..writeByte(7)
+      ..write(obj.coverUrl)
+      ..writeByte(8)
+      ..write(obj.itemCount)
+      ..writeByte(9)
+      ..write(obj.isManagedByApp)
+      ..writeByte(10)
+      ..write(obj.lastSyncedAt)
+      ..writeByte(11)
+      ..write(obj.kind);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteCollectionAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FavoriteEntryAdapter extends TypeAdapter<FavoriteEntry> {
+  @override
+  final typeId = 2;
+
+  @override
+  FavoriteEntry read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoriteEntry(
+      itemId: fields[0] as String,
+      aid: (fields[1] as num).toInt(),
+      bvid: fields[2] as String,
+      title: fields[3] as String,
+      author: fields[4] as String,
+      coverUrl: fields[5] as String,
+      ownerMid: (fields[12] as num?)?.toInt(),
+      cid: (fields[9] as num?)?.toInt(),
+      page: (fields[10] as num?)?.toInt(),
+      pageTitle: fields[11] as String?,
+      durationText: fields[6] as String?,
+      createdAt: fields[7] as DateTime,
+      updatedAt: fields[8] as DateTime,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteEntry obj) {
+    writer
+      ..writeByte(13)
+      ..writeByte(0)
+      ..write(obj.itemId)
+      ..writeByte(1)
+      ..write(obj.aid)
+      ..writeByte(2)
+      ..write(obj.bvid)
+      ..writeByte(3)
+      ..write(obj.title)
+      ..writeByte(4)
+      ..write(obj.author)
+      ..writeByte(5)
+      ..write(obj.coverUrl)
+      ..writeByte(6)
+      ..write(obj.durationText)
+      ..writeByte(7)
+      ..write(obj.createdAt)
+      ..writeByte(8)
+      ..write(obj.updatedAt)
+      ..writeByte(9)
+      ..write(obj.cid)
+      ..writeByte(10)
+      ..write(obj.page)
+      ..writeByte(11)
+      ..write(obj.pageTitle)
+      ..writeByte(12)
+      ..write(obj.ownerMid);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteEntryAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FavoriteMembershipAdapter extends TypeAdapter<FavoriteMembership> {
+  @override
+  final typeId = 3;
+
+  @override
+  FavoriteMembership read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoriteMembership(
+      id: fields[0] as String,
+      collectionId: fields[1] as String,
+      itemId: fields[2] as String,
+      addedAt: fields[3] as DateTime,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteMembership obj) {
+    writer
+      ..writeByte(4)
+      ..writeByte(0)
+      ..write(obj.id)
+      ..writeByte(1)
+      ..write(obj.collectionId)
+      ..writeByte(2)
+      ..write(obj.itemId)
+      ..writeByte(3)
+      ..write(obj.addedAt);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteMembershipAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class PlayerQueueModeAdapter extends TypeAdapter<PlayerQueueMode> {
+  @override
+  final typeId = 4;
+
+  @override
+  PlayerQueueMode read(BinaryReader reader) {
+    switch (reader.readByte()) {
+      case 0:
+        return PlayerQueueMode.sequence;
+      case 1:
+        return PlayerQueueMode.singleRepeat;
+      case 2:
+        return PlayerQueueMode.shuffle;
+      default:
+        return PlayerQueueMode.sequence;
+    }
+  }
+
+  @override
+  void write(BinaryWriter writer, PlayerQueueMode obj) {
+    switch (obj) {
+      case PlayerQueueMode.sequence:
+        writer.writeByte(0);
+      case PlayerQueueMode.singleRepeat:
+        writer.writeByte(1);
+      case PlayerQueueMode.shuffle:
+        writer.writeByte(2);
+    }
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PlayerQueueModeAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class PersistedPlayableItemAdapter extends TypeAdapter<PersistedPlayableItem> {
+  @override
+  final typeId = 5;
+
+  @override
+  PersistedPlayableItem read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return PersistedPlayableItem(
+      aid: (fields[0] as num).toInt(),
+      bvid: fields[1] as String,
+      title: fields[2] as String,
+      author: fields[3] as String,
+      coverUrl: fields[4] as String,
+      kind: fields[20] == null
+          ? CollectionKind.music
+          : fields[20] as CollectionKind,
+      collectionId: fields[21] as String?,
+      ownerMid: (fields[19] as num?)?.toInt(),
+      cid: (fields[5] as num?)?.toInt(),
+      page: (fields[6] as num?)?.toInt(),
+      pageTitle: fields[7] as String?,
+      durationText: fields[8] as String?,
+      playCountText: fields[9] as String?,
+      danmakuCountText: fields[10] as String?,
+      likeCountText: fields[11] as String?,
+      coinCountText: fields[12] as String?,
+      favoriteCountText: fields[13] as String?,
+      shareCountText: fields[14] as String?,
+      replyCount: (fields[18] as num?)?.toInt(),
+      replyCountText: fields[15] as String?,
+      publishTimeText: fields[16] as String?,
+      description: fields[17] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, PersistedPlayableItem obj) {
+    writer
+      ..writeByte(22)
+      ..writeByte(0)
+      ..write(obj.aid)
+      ..writeByte(1)
+      ..write(obj.bvid)
+      ..writeByte(2)
+      ..write(obj.title)
+      ..writeByte(3)
+      ..write(obj.author)
+      ..writeByte(4)
+      ..write(obj.coverUrl)
+      ..writeByte(5)
+      ..write(obj.cid)
+      ..writeByte(6)
+      ..write(obj.page)
+      ..writeByte(7)
+      ..write(obj.pageTitle)
+      ..writeByte(8)
+      ..write(obj.durationText)
+      ..writeByte(9)
+      ..write(obj.playCountText)
+      ..writeByte(10)
+      ..write(obj.danmakuCountText)
+      ..writeByte(11)
+      ..write(obj.likeCountText)
+      ..writeByte(12)
+      ..write(obj.coinCountText)
+      ..writeByte(13)
+      ..write(obj.favoriteCountText)
+      ..writeByte(14)
+      ..write(obj.shareCountText)
+      ..writeByte(15)
+      ..write(obj.replyCountText)
+      ..writeByte(16)
+      ..write(obj.publishTimeText)
+      ..writeByte(17)
+      ..write(obj.description)
+      ..writeByte(18)
+      ..write(obj.replyCount)
+      ..writeByte(19)
+      ..write(obj.ownerMid)
+      ..writeByte(20)
+      ..write(obj.kind)
+      ..writeByte(21)
+      ..write(obj.collectionId);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PersistedPlayableItemAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class PersistedPlaybackQueueAdapter
+    extends TypeAdapter<PersistedPlaybackQueue> {
+  @override
+  final typeId = 6;
+
+  @override
+  PersistedPlaybackQueue read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return PersistedPlaybackQueue(
+      queue: fields[0] == null
+          ? []
+          : (fields[0] as List).cast<PersistedPlayableItem>(),
+      currentQueueIndex: (fields[1] as num?)?.toInt(),
+      queueMode: fields[2] == null
+          ? PlayerQueueMode.sequence
+          : fields[2] as PlayerQueueMode,
+      queueSourceLabel: fields[3] as String?,
+      resumePositionMs: fields[4] == null ? 0 : (fields[4] as num).toInt(),
+      savedAtEpochMs: (fields[5] as num?)?.toInt(),
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, PersistedPlaybackQueue obj) {
+    writer
+      ..writeByte(6)
+      ..writeByte(0)
+      ..write(obj.queue)
+      ..writeByte(1)
+      ..write(obj.currentQueueIndex)
+      ..writeByte(2)
+      ..write(obj.queueMode)
+      ..writeByte(3)
+      ..write(obj.queueSourceLabel)
+      ..writeByte(4)
+      ..write(obj.resumePositionMs)
+      ..writeByte(5)
+      ..write(obj.savedAtEpochMs);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PersistedPlaybackQueueAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class RecentPlaybackEntryAdapter extends TypeAdapter<RecentPlaybackEntry> {
+  @override
+  final typeId = 7;
+
+  @override
+  RecentPlaybackEntry read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return RecentPlaybackEntry(
+      aid: (fields[0] as num).toInt(),
+      bvid: fields[1] as String,
+      title: fields[2] as String,
+      author: fields[3] as String,
+      coverUrl: fields[4] as String,
+      kind: fields[8] == null
+          ? CollectionKind.music
+          : fields[8] as CollectionKind,
+      collectionId: fields[9] as String?,
+      page: (fields[10] as num?)?.toInt(),
+      cid: (fields[5] as num?)?.toInt(),
+      pageTitle: fields[6] as String?,
+      playedAtEpochMs: (fields[7] as num).toInt(),
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, RecentPlaybackEntry obj) {
+    writer
+      ..writeByte(11)
+      ..writeByte(0)
+      ..write(obj.aid)
+      ..writeByte(1)
+      ..write(obj.bvid)
+      ..writeByte(2)
+      ..write(obj.title)
+      ..writeByte(3)
+      ..write(obj.author)
+      ..writeByte(4)
+      ..write(obj.coverUrl)
+      ..writeByte(5)
+      ..write(obj.cid)
+      ..writeByte(6)
+      ..write(obj.pageTitle)
+      ..writeByte(7)
+      ..write(obj.playedAtEpochMs)
+      ..writeByte(8)
+      ..write(obj.kind)
+      ..writeByte(9)
+      ..write(obj.collectionId)
+      ..writeByte(10)
+      ..write(obj.page);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is RecentPlaybackEntryAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class MetaLyricsAdapter extends TypeAdapter<MetaLyrics> {
+  @override
+  final typeId = 8;
+
+  @override
+  MetaLyrics read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return MetaLyrics(
+      lyric: fields[0] as String?,
+      translatedLyric: fields[1] as String?,
+      romanizedLyric: fields[2] as String?,
+      karaokeLyric: fields[3] as String?,
+      karaokeTranslatedLyric: fields[4] as String?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, MetaLyrics obj) {
+    writer
+      ..writeByte(5)
+      ..writeByte(0)
+      ..write(obj.lyric)
+      ..writeByte(1)
+      ..write(obj.translatedLyric)
+      ..writeByte(2)
+      ..write(obj.romanizedLyric)
+      ..writeByte(3)
+      ..write(obj.karaokeLyric)
+      ..writeByte(4)
+      ..write(obj.karaokeTranslatedLyric);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MetaLyricsAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class MetadataAdapter extends TypeAdapter<Metadata> {
+  @override
+  final typeId = 9;
+
+  @override
+  Metadata read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return Metadata(
+      stableId: fields[0] as String,
+      artist: fields[1] as String?,
+      title: fields[2] as String?,
+      lyrics: fields[3] as String?,
+      metaLyrics: fields[4] as MetaLyrics?,
+      albumArtUrl: fields[5] as String?,
+      lyricBaseOffsetMs: fields[8] == null ? 0 : (fields[8] as num).toInt(),
+      lyricOffsetMs: fields[6] == null ? 0 : (fields[6] as num).toInt(),
+      updatedAt: fields[7] as DateTime?,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, Metadata obj) {
+    writer
+      ..writeByte(9)
+      ..writeByte(0)
+      ..write(obj.stableId)
+      ..writeByte(1)
+      ..write(obj.artist)
+      ..writeByte(2)
+      ..write(obj.title)
+      ..writeByte(3)
+      ..write(obj.lyrics)
+      ..writeByte(4)
+      ..write(obj.metaLyrics)
+      ..writeByte(5)
+      ..write(obj.albumArtUrl)
+      ..writeByte(6)
+      ..write(obj.lyricOffsetMs)
+      ..writeByte(7)
+      ..write(obj.updatedAt)
+      ..writeByte(8)
+      ..write(obj.lyricBaseOffsetMs);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is MetadataAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FavoriteCollectionSourceAdapter
+    extends TypeAdapter<FavoriteCollectionSource> {
+  @override
+  final typeId = 10;
+
+  @override
+  FavoriteCollectionSource read(BinaryReader reader) {
+    switch (reader.readByte()) {
+      case 0:
+        return FavoriteCollectionSource.local;
+      case 1:
+        return FavoriteCollectionSource.remote;
+      default:
+        return FavoriteCollectionSource.local;
+    }
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteCollectionSource obj) {
+    switch (obj) {
+      case FavoriteCollectionSource.local:
+        writer.writeByte(0);
+      case FavoriteCollectionSource.remote:
+        writer.writeByte(1);
+    }
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteCollectionSourceAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FavoriteUpAdapter extends TypeAdapter<FavoriteUp> {
+  @override
+  final typeId = 11;
+
+  @override
+  FavoriteUp read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoriteUp(
+      mid: (fields[0] as num).toInt(),
+      name: fields[1] as String,
+      avatarUrl: fields[2] as String,
+      officialType: (fields[3] as num?)?.toInt(),
+      favoritedAtEpochMs: (fields[4] as num).toInt(),
+      updatedAtEpochMs: (fields[5] as num).toInt(),
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteUp obj) {
+    writer
+      ..writeByte(6)
+      ..writeByte(0)
+      ..write(obj.mid)
+      ..writeByte(1)
+      ..write(obj.name)
+      ..writeByte(2)
+      ..write(obj.avatarUrl)
+      ..writeByte(3)
+      ..write(obj.officialType)
+      ..writeByte(4)
+      ..write(obj.favoritedAtEpochMs)
+      ..writeByte(5)
+      ..write(obj.updatedAtEpochMs);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteUpAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class FavoritedSeasonAdapter extends TypeAdapter<FavoritedSeason> {
+  @override
+  final typeId = 12;
+
+  @override
+  FavoritedSeason read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoritedSeason(
+      seasonId: (fields[0] as num).toInt(),
+      mid: (fields[1] as num).toInt(),
+      title: fields[2] as String,
+      coverUrl: fields[3] as String,
+      description: fields[4] as String?,
+      total: (fields[5] as num).toInt(),
+      favoritedAtEpochMs: (fields[6] as num).toInt(),
+      updatedAtEpochMs: (fields[7] as num).toInt(),
+      lastSyncedAtEpochMs: (fields[8] as num).toInt(),
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoritedSeason obj) {
+    writer
+      ..writeByte(9)
+      ..writeByte(0)
+      ..write(obj.seasonId)
+      ..writeByte(1)
+      ..write(obj.mid)
+      ..writeByte(2)
+      ..write(obj.title)
+      ..writeByte(3)
+      ..write(obj.coverUrl)
+      ..writeByte(4)
+      ..write(obj.description)
+      ..writeByte(5)
+      ..write(obj.total)
+      ..writeByte(6)
+      ..write(obj.favoritedAtEpochMs)
+      ..writeByte(7)
+      ..write(obj.updatedAtEpochMs)
+      ..writeByte(8)
+      ..write(obj.lastSyncedAtEpochMs);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoritedSeasonAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class CollectionKindAdapter extends TypeAdapter<CollectionKind> {
+  @override
+  final typeId = 13;
+
+  @override
+  CollectionKind read(BinaryReader reader) {
+    switch (reader.readByte()) {
+      case 0:
+        return CollectionKind.music;
+      case 1:
+        return CollectionKind.spoken;
+      default:
+        return CollectionKind.music;
+    }
+  }
+
+  @override
+  void write(BinaryWriter writer, CollectionKind obj) {
+    switch (obj) {
+      case CollectionKind.music:
+        writer.writeByte(0);
+      case CollectionKind.spoken:
+        writer.writeByte(1);
+    }
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CollectionKindAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}

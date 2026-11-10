@@ -1,0 +1,1463 @@
+import 'dart:async';
+
+import 'package:audio_service/audio_service.dart';
+import 'package:bilimusic/common/logger.dart';
+import 'package:bilimusic/common/util/toast_util.dart';
+import 'package:bilimusic/core/bili/session/bili_session_controller.dart';
+import 'package:bilimusic/core/hive/hive_keys.dart';
+import 'package:bilimusic/core/settings/app_settings_store.dart';
+import 'package:bilimusic/core/window/windows_taskbar_thumbnail_toolbar.dart';
+import 'package:bilimusic/feature/download/data/download_repository.dart';
+import 'package:bilimusic/feature/download/logic/downloaded_audio_source_resolver.dart';
+import 'package:bilimusic/feature/listening/logic/listening_progress_controller.dart';
+import 'package:bilimusic/feature/player/data/audio_cache_repository.dart';
+import 'package:bilimusic/feature/player/data/bili_chapter_repository.dart';
+import 'package:bilimusic/feature/player/data/bili_player_repository.dart';
+import 'package:bilimusic/feature/player/data/player_queue_local_repository.dart';
+import 'package:bilimusic/feature/player/domain/player_audio_quality_preference.dart';
+import 'package:bilimusic/feature/player/domain/player_event.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:bilimusic/feature/player/domain/playback_chapter.dart';
+import 'package:bilimusic/feature/player/domain/persisted_playback_queue.dart';
+import 'package:bilimusic/feature/player/domain/player_state.dart';
+import 'package:bilimusic/feature/player/logic/media_session/app_audio_handler.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_playback_loader.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_queue_manager.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_session_coordinator.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_audio_engine.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_audio_quality_preference_logic.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_audio_session_coordinator.dart';
+import 'package:bilimusic/feature/player/logic/player_event_hub.dart';
+import 'package:bilimusic/feature/player/logic/playback/player_settings_logic.dart';
+import 'package:bilimusic/feature/recent/logic/recent_playback_controller.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+final NotifierProvider<PlayerController, PlayerState> playerControllerProvider =
+    NotifierProvider<PlayerController, PlayerState>(PlayerController.new);
+
+class PlayerController extends Notifier<PlayerState>
+    implements PlayerCommandTarget, PlayerSessionHost {
+  PlayerController({PlayerAudioEngine? audioEngine})
+    : _providedAudioEngine = audioEngine;
+
+  final PlayerAudioEngine? _providedAudioEngine;
+  final AppLogger _logger = AppLogger('PlayerController');
+
+  late final PlayerQueueLocalRepository _queueRepository = ref.read(
+    playerQueueLocalRepositoryProvider,
+  );
+  late final AppSettingsStore _settingsStore = ref.read(
+    appSettingsStoreProvider,
+  );
+  late final AppAudioHandler _audioHandler = ref.read(appAudioHandlerProvider);
+  late final PlayerAudioEngine _audioEngine =
+      _providedAudioEngine ?? PlayerAudioEngine();
+  late final PlayerPlaybackLoader _playbackLoader = PlayerPlaybackLoader(
+    repository: ref.read(biliPlayerRepositoryProvider),
+    audioCacheRepository: ref.read(playerAudioCacheRepositoryProvider),
+    audioEngine: _audioEngine,
+    readSession: () => ref.read(biliSessionControllerProvider),
+    readQualityPreference: () =>
+        ref.read(playerAudioQualityPreferenceLogicProvider),
+    logEvent: _logPlayerEvent,
+    downloadedSource: _downloadedAudioSource,
+  );
+  late final DownloadedAudioSourceResolver? _downloadedAudioSource =
+      _buildDownloadedAudioSource();
+
+  DownloadedAudioSourceResolver? _buildDownloadedAudioSource() {
+    try {
+      return DownloadedAudioSourceResolver(
+        ref.read(downloadRepositoryProvider),
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  late final PlayerQueueManager _queueManager = PlayerQueueManager();
+  late final BiliChapterRepository _chapterRepository = ref.read(
+    biliChapterRepositoryProvider,
+  );
+  late final PlayerSessionCoordinator _session = PlayerSessionCoordinator(
+    host: this,
+    playbackLoader: _playbackLoader,
+    queueManager: _queueManager,
+  );
+  late final PlayerAudioSessionCoordinator _audioSessionCoordinator =
+      PlayerAudioSessionCoordinator(
+        audioEngine: _audioEngine,
+        readAllowMixWithOthers: () => ref.read(playerSettingsLogicProvider),
+        readHasQueue: () => state.hasQueue,
+        readIsPlaying: () => state.isPlaying,
+        readIsReady: () => state.isReady,
+        readIsLoading: () => state.isLoading,
+        readHasError: () => state.hasError,
+        play: play,
+        pause: pause,
+      );
+  late final PlayerEventHub _eventHub = ref.read(playerEventHubProvider);
+
+  final Map<String, int?> _qualityOverrides = <String, int?>{};
+  final List<StreamSubscription<dynamic>> _subscriptions =
+      <StreamSubscription<dynamic>>[];
+  // 底层播放器原始值和页面使用的 PlayerState 分开保存。
+  _EnginePlaybackSnapshot _enginePlaybackSnapshot =
+      const _EnginePlaybackSnapshot();
+
+  ListeningProgressController? _listening;
+
+  void _suspendListening() {
+    unawaited(_listening?.suspend());
+  }
+
+  bool _isBound = false;
+  bool _isDisposed = false;
+  bool _isAdvancingQueue = false;
+  bool _isRetryingPlayback = false;
+  double _lastAudibleVolume = 1.0;
+  int _operationGeneration = 0;
+  Duration _lastPersistedProgress = Duration.zero;
+  Duration? _pendingSeekTarget;
+
+  static const Duration _persistProgressStep = Duration(seconds: 10);
+
+  @override
+  PlayerState build() {
+    final double savedVolume = _readPersistedVolume();
+    if (savedVolume > 0) {
+      _lastAudibleVolume = savedVolume;
+    }
+
+    if (!_isBound) {
+      _bindPlayerStreams();
+      unawaited(_audioEngine.setVolume(savedVolume));
+      _audioHandler.attachTarget(this);
+      WindowsTaskbarThumbnailToolbar.instance.attachTarget(this);
+      unawaited(_audioSessionCoordinator.bind());
+      _isBound = true;
+    }
+
+    ref.onDispose(() {
+      unawaited(_dispose());
+    });
+
+    return PlayerState(volume: savedVolume);
+  }
+
+  Future<void> _dispose() async {
+    if (_isDisposed) {
+      return;
+    }
+    _isDisposed = true;
+    _nextGeneration();
+    _audioHandler.detachTarget(this);
+    WindowsTaskbarThumbnailToolbar.instance.detachTarget(this);
+    await _audioSessionCoordinator.dispose();
+
+    for (final StreamSubscription<dynamic> subscription in _subscriptions) {
+      await subscription.cancel();
+    }
+
+    try {
+      await _audioEngine.stop();
+      await _audioEngine.dispose();
+    } on Object {
+      // Ignore engine dispose failures.
+    }
+  }
+
+  Future<void> shutdown() async {
+    if (_isDisposed) {
+      return;
+    }
+    _nextGeneration();
+    await _listening?.suspend();
+    await _listening?.flush();
+    try {
+      await _persistQueueSnapshot();
+      await _audioEngine.stop();
+    } finally {
+      await _dispose();
+    }
+  }
+
+  Future<void> loadFromItem(PlayableItem item, {bool autoplay = true}) {
+    return setQueue(
+      <PlayableItem>[item],
+      startIndex: 0,
+      sourceLabel: state.queueSourceLabel,
+      autoplay: autoplay,
+    );
+  }
+
+  @override
+  Future<void> play() async {
+    if (!state.hasQueue) {
+      return;
+    }
+
+    final int? queueIndex = state.currentQueueIndex;
+    _session.resetEngineRetryCount();
+    if (queueIndex == null) {
+      await _session.load(0, autoplay: true, initialPosition: state.position);
+      return;
+    }
+
+    if (!state.isReady && !state.isLoading) {
+      await _session.load(
+        queueIndex,
+        autoplay: true,
+        initialPosition: state.position,
+      );
+      return;
+    }
+
+    await _playCurrentSource();
+  }
+
+  @override
+  Future<void> pause() async {
+    _nextGeneration();
+    _session.cancelPendingRetry();
+    await _audioEngine.pause();
+    if (state.isLoading) {
+      state = state.copyWith(
+        isLoading: false,
+        isBuffering: false,
+        statusHint: null,
+      );
+      _publishPlaybackState();
+    }
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> togglePlayback() async {
+    if (state.isPlaying) {
+      await pause();
+      return;
+    }
+    await play();
+  }
+
+  Future<void> setAudioQualityPreference(
+    PlayerAudioQualityPreference preference,
+  ) async {
+    final PlayerAudioQualityPreference currentPreference = ref.read(
+      playerAudioQualityPreferenceLogicProvider,
+    );
+    if (currentPreference == preference) {
+      return;
+    }
+
+    await ref
+        .read(playerAudioQualityPreferenceLogicProvider.notifier)
+        .setPreference(preference);
+
+    if (!state.hasActiveQueueIndex || state.currentItem == null) {
+      return;
+    }
+
+    _qualityOverrides.remove(state.currentItem!.stableId);
+
+    _playbackLoader.clearResolvedEntryCache(
+      item: state.currentItem!,
+      preference: currentPreference,
+    );
+    _playbackLoader.clearResolvedEntryCache(
+      item: state.currentItem!,
+      preference: preference,
+    );
+
+    final int queueIndex = state.currentQueueIndex!;
+    final bool wasPlaying = state.isPlaying;
+    final Duration position = state.position;
+    await _session.load(
+      queueIndex,
+      autoplay: wasPlaying,
+      initialPosition: position,
+    );
+    if (!wasPlaying && state.isReady) {
+      await _audioEngine.pause();
+      state = state.copyWith(isPlaying: false, isBuffering: false);
+      _publishPlaybackState();
+      await _persistQueueSnapshot();
+    }
+  }
+
+  Future<void> switchCurrentAudioQuality(int? qualityId) async {
+    final PlayableItem? currentItem = state.currentItem;
+    if (!state.hasActiveQueueIndex || currentItem == null) {
+      return;
+    }
+
+    final int? currentQualityId = state.audioStream?.qualityId;
+    if (currentQualityId == qualityId) {
+      return;
+    }
+
+    final PlayerAudioQualityPreference qualityPreference = ref.read(
+      playerAudioQualityPreferenceLogicProvider,
+    );
+    _playbackLoader.clearResolvedEntryCache(
+      item: currentItem,
+      preference: qualityPreference,
+      preferredQualityId: qualityId,
+    );
+    _qualityOverrides[currentItem.stableId] = qualityId;
+
+    final int queueIndex = state.currentQueueIndex!;
+    final bool wasPlaying = state.isPlaying;
+    final Duration position = state.position;
+    await _session.load(
+      queueIndex,
+      autoplay: wasPlaying,
+      initialPosition: position,
+    );
+    if (!wasPlaying && state.isReady) {
+      await _audioEngine.pause();
+      state = state.copyWith(isPlaying: false, isBuffering: false);
+      _publishPlaybackState();
+      await _persistQueueSnapshot();
+    }
+  }
+
+  @override
+  Future<void> seek(Duration position) async {
+    _emitPlayerEvent(PlayerEventType.seek, position: position);
+    final Duration target = position < Duration.zero ? Duration.zero : position;
+    _pendingSeekTarget = target;
+    state = state.copyWith(position: target);
+    try {
+      await _audioEngine.seek(target);
+    } finally {
+      Future<void>.delayed(const Duration(milliseconds: 600), () {
+        if (_pendingSeekTarget == target) {
+          _pendingSeekTarget = null;
+        }
+      });
+    }
+  }
+
+  // seek即播放
+  Future<void> seekFromProgressBar(Duration position) async {
+    await seek(position);
+    if (!state.isPlaying) {
+      await play();
+    }
+  }
+
+  Future<void> setVolume(double volume) async {
+    final double nextVolume = volume.clamp(0.0, 1.0).toDouble();
+    if (nextVolume > 0) {
+      _lastAudibleVolume = nextVolume;
+    }
+    state = state.copyWith(volume: nextVolume);
+    await _audioEngine.setVolume(nextVolume);
+    await _settingsStore.writeDouble(HiveKeys.playerVolume, nextVolume);
+  }
+
+  Future<double> toggleMute() async {
+    if (state.volume > 0) {
+      _lastAudibleVolume = state.volume;
+      await setVolume(0);
+      return 0;
+    }
+
+    final double nextVolume = _lastAudibleVolume <= 0 ? 1 : _lastAudibleVolume;
+    await setVolume(nextVolume);
+    return nextVolume;
+  }
+
+  Future<void> setSpeed(double speed) async {
+    if (state.speed == speed) {
+      return;
+    }
+
+    state = state.copyWith(speed: speed);
+    await _audioEngine.setRate(speed);
+    _publishPlaybackState();
+  }
+
+  Future<void> seekBy(Duration offset) async {
+    final Duration effectiveDuration = state.duration ?? Duration.zero;
+    final Duration nextPosition = _audioEngine.position + offset;
+    final Duration clamped = nextPosition < Duration.zero
+        ? Duration.zero
+        : effectiveDuration > Duration.zero && nextPosition > effectiveDuration
+        ? effectiveDuration
+        : nextPosition;
+    await seek(clamped);
+  }
+
+  @override
+  Future<void> stop() async {
+    final int generation = _nextGeneration();
+    _suspendListening();
+    await _audioEngine.stop();
+    if (!_isCurrentGeneration(generation)) {
+      return;
+    }
+
+    state = state.copyWith(
+      isPlaying: false,
+      isBuffering: false,
+      isReady: false,
+      position: Duration.zero,
+      bufferedPosition: Duration.zero,
+    );
+    _emitPlayerEvent(PlayerEventType.stop);
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> setQueue(
+    List<PlayableItem> items, {
+    int startIndex = 0,
+    String? sourceLabel,
+    bool autoplay = true,
+  }) async {
+    if (items.isEmpty) {
+      return;
+    }
+
+    final int generation = _nextGeneration();
+    _suspendListening();
+    final PlayableItem startItem = items[startIndex.clamp(0, items.length - 1)];
+    final List<PlayableItem> uniqueItems = _dedupeQueueItems(items);
+    final int resolvedIndex = uniqueItems.indexWhere(
+      (PlayableItem item) => item.stableId == startItem.stableId,
+    );
+    if (resolvedIndex < 0) {
+      return;
+    }
+    final List<PlayableItem> queue = List<PlayableItem>.unmodifiable(
+      uniqueItems,
+    );
+    _qualityOverrides.clear();
+    _queueManager.resetForQueue(currentIndex: resolvedIndex);
+    _resetEnginePlaybackSnapshot();
+    state = state.copyWith(
+      queue: queue,
+      currentQueueIndex: resolvedIndex,
+      currentItem: queue[resolvedIndex],
+      queueSourceLabel: sourceLabel,
+      availableParts: const <PlayableItem>[],
+      chapters: const <PlaybackChapter>[],
+      audioStream: null,
+      duration: null,
+      position: Duration.zero,
+      bufferedPosition: Duration.zero,
+      isReady: false,
+      isPlaying: false,
+      isBuffering: false,
+      statusHint: null,
+      errorMessage: null,
+    );
+    _emitPlayerEvent(PlayerEventType.trackChanged);
+    _publishPlaybackState();
+    await _session.load(
+      resolvedIndex,
+      autoplay: autoplay,
+      initialPosition: Duration.zero,
+      generation: generation,
+    );
+  }
+
+  Future<void> replaceCurrentQueueItem(
+    PlayableItem item, {
+    bool autoplay = true,
+  }) async {
+    if (!state.hasActiveQueueIndex) {
+      await setQueue(
+        <PlayableItem>[item],
+        startIndex: 0,
+        sourceLabel: state.queueSourceLabel,
+        autoplay: autoplay,
+      );
+      return;
+    }
+
+    final int currentIndex = state.currentQueueIndex!;
+    final int generation = _nextGeneration();
+    _suspendListening();
+    final List<PlayableItem> nextQueue = List<PlayableItem>.of(state.queue);
+    final PlayableItem previousItem = nextQueue[currentIndex];
+    _qualityOverrides.remove(previousItem.stableId);
+    nextQueue[currentIndex] = item;
+    _playbackLoader.removeResolvedEntryCachesForItem(previousItem);
+    _resetEnginePlaybackSnapshot();
+    state = state.copyWith(
+      queue: List<PlayableItem>.unmodifiable(nextQueue),
+      currentQueueIndex: currentIndex,
+      currentItem: item,
+      availableParts: const <PlayableItem>[],
+      chapters: const <PlaybackChapter>[],
+      audioStream: null,
+      duration: null,
+      position: Duration.zero,
+      bufferedPosition: Duration.zero,
+      isReady: false,
+      isPlaying: false,
+      isBuffering: false,
+      statusHint: null,
+      errorMessage: null,
+    );
+    _emitPlayerEvent(PlayerEventType.trackChanged);
+    _publishPlaybackState();
+    await _session.load(
+      currentIndex,
+      autoplay: autoplay,
+      initialPosition: Duration.zero,
+      generation: generation,
+    );
+  }
+
+  @override
+  Future<void> enqueueAvailableParts(List<PlayableItem> parts) =>
+      enqueue(parts);
+
+  Future<void> enqueue(List<PlayableItem> items) async {
+    if (items.isEmpty) {
+      return;
+    }
+
+    final Set<String> queuedIds = state.queue
+        .map((PlayableItem item) => item.stableId)
+        .toSet();
+    final List<PlayableItem> appendItems = items
+        .where((PlayableItem item) => queuedIds.add(item.stableId))
+        .toList(growable: false);
+    if (appendItems.isEmpty) {
+      return;
+    }
+
+    final List<PlayableItem> queue = List<PlayableItem>.unmodifiable(
+      <PlayableItem>[...state.queue, ...appendItems],
+    );
+
+    if (!state.hasActiveQueueIndex) {
+      await setQueue(
+        queue,
+        startIndex: 0,
+        sourceLabel: state.queueSourceLabel,
+        autoplay: false,
+      );
+      return;
+    }
+
+    state = state.copyWith(queue: queue);
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> playNext(PlayableItem item) async {
+    final int existingIndex = state.queue.indexWhere(
+      (PlayableItem queuedItem) => queuedItem.stableId == item.stableId,
+    );
+    if (existingIndex >= 0) {
+      final int targetIndex = state.hasActiveQueueIndex
+          ? state.currentQueueIndex! +
+                (existingIndex < state.currentQueueIndex! ? 0 : 1)
+          : 0;
+      await reorderQueueItem(existingIndex, targetIndex);
+      return;
+    }
+
+    if (!state.hasActiveQueueIndex) {
+      await setQueue(<PlayableItem>[item]);
+      return;
+    }
+
+    final int insertIndex = state.currentQueueIndex! + 1;
+    final List<PlayableItem> nextQueue = List<PlayableItem>.of(state.queue)
+      ..insert(insertIndex, item);
+    state = state.copyWith(queue: List<PlayableItem>.unmodifiable(nextQueue));
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> reorderQueueItem(int oldIndex, int newIndex) async {
+    if (oldIndex < 0 || oldIndex >= state.queue.length) {
+      return;
+    }
+    if (newIndex < 0 || newIndex > state.queue.length) {
+      return;
+    }
+
+    _session.cancelPendingRetry();
+    _nextGeneration();
+
+    final QueueReorderResult reorder = _queueManager.reorder(
+      queue: state.queue,
+      currentIndex: state.currentQueueIndex,
+      oldIndex: oldIndex,
+      newIndex: newIndex,
+    );
+    final int? nextCurrentIndex = reorder.nextCurrentIndex;
+    state = state.copyWith(
+      queue: reorder.queue,
+      currentQueueIndex: nextCurrentIndex,
+      currentItem: nextCurrentIndex == null
+          ? null
+          : reorder.queue[nextCurrentIndex],
+    );
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> removeQueueItemAt(int index) async {
+    if (index < 0 || index >= state.queue.length) {
+      return;
+    }
+
+    final PlayableItem removedItem = state.queue[index];
+    _qualityOverrides.remove(removedItem.stableId);
+    final QueueRemovalResult removal = _queueManager.removeAt(
+      queue: state.queue,
+      currentIndex: state.currentQueueIndex,
+      removedIndex: index,
+    );
+    final List<PlayableItem> nextQueue = removal.queue;
+    _playbackLoader.removeResolvedEntryCachesForItem(removedItem);
+
+    if (nextQueue.isEmpty) {
+      await clearQueue();
+      return;
+    }
+
+    final int generation = _nextGeneration();
+    final int? previousCurrentIndex = state.currentQueueIndex;
+    final bool wasPlaying = state.isPlaying;
+    if (removal.removedCurrentItem) _suspendListening();
+    final int? nextCurrentIndex = removal.nextCurrentIndex;
+    state = state.copyWith(
+      queue: List<PlayableItem>.unmodifiable(nextQueue),
+      currentQueueIndex: nextCurrentIndex,
+      currentItem: nextCurrentIndex == null
+          ? null
+          : nextQueue[nextCurrentIndex],
+      availableParts: removal.removedCurrentItem
+          ? const <PlayableItem>[]
+          : state.availableParts,
+      audioStream: removal.removedCurrentItem ? null : state.audioStream,
+      duration: removal.removedCurrentItem ? null : state.duration,
+      position: removal.removedCurrentItem ? Duration.zero : state.position,
+      bufferedPosition: removal.removedCurrentItem
+          ? Duration.zero
+          : state.bufferedPosition,
+      isReady: removal.removedCurrentItem ? false : state.isReady,
+      isPlaying: removal.removedCurrentItem ? false : state.isPlaying,
+      isBuffering: false,
+      statusHint: removal.removedCurrentItem ? null : state.statusHint,
+      errorMessage: null,
+    );
+    _publishPlaybackState();
+
+    if (nextCurrentIndex == null) {
+      await _persistQueueSnapshot();
+      return;
+    }
+
+    if (removal.removedCurrentItem && previousCurrentIndex != null) {
+      await _session.load(
+        nextCurrentIndex,
+        autoplay: wasPlaying,
+        initialPosition: Duration.zero,
+        generation: generation,
+      );
+      return;
+    }
+
+    await _persistQueueSnapshot();
+  }
+
+  Future<void> clearQueue() async {
+    _nextGeneration();
+    _suspendListening();
+    _queueManager.resetForQueue(currentIndex: null);
+    _qualityOverrides.clear();
+    await _audioEngine.stop();
+    _resetEnginePlaybackSnapshot();
+    state = state.copyWith(
+      queue: const <PlayableItem>[],
+      currentQueueIndex: null,
+      currentItem: null,
+      availableParts: const <PlayableItem>[],
+      chapters: const <PlaybackChapter>[],
+      audioStream: null,
+      queueSourceLabel: null,
+      isLoading: false,
+      isReady: false,
+      isPlaying: false,
+      isBuffering: false,
+      position: Duration.zero,
+      bufferedPosition: Duration.zero,
+      duration: null,
+      statusHint: null,
+      errorMessage: null,
+    );
+    _publishPlaybackState(processingState: AudioProcessingState.idle);
+    await _queueRepository.clear();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    final int? targetIndex = _queueManager.resolvePreviousIndex(
+      queue: state.queue,
+      currentIndex: state.currentQueueIndex,
+      mode: state.queueMode,
+    );
+    if (targetIndex == null) {
+      await seek(Duration.zero);
+      return;
+    }
+
+    await skipToQueueIndex(targetIndex);
+  }
+
+  @override
+  Future<void> skipToNext() async {
+    if (_isAdvancingQueue) {
+      return;
+    }
+
+    _isAdvancingQueue = true;
+    try {
+      final int? targetIndex = _queueManager.resolveNextIndex(
+        queue: state.queue,
+        currentIndex: state.currentQueueIndex,
+        mode: state.queueMode,
+      );
+      if (targetIndex == null) {
+        state = state.copyWith(isPlaying: false, isBuffering: false);
+        _publishPlaybackState();
+        return;
+      }
+      await skipToQueueIndex(targetIndex);
+    } finally {
+      _isAdvancingQueue = false;
+    }
+  }
+
+  Future<void> skipToQueueIndex(int index, {bool autoplay = true}) async {
+    if (index < 0 || index >= state.queue.length) {
+      return;
+    }
+
+    final int generation = _nextGeneration();
+    await _session.load(
+      index,
+      autoplay: autoplay,
+      initialPosition: Duration.zero,
+      generation: generation,
+    );
+  }
+
+  void toggleQueueMode() {
+    final PlayerQueueMode nextMode = switch (state.queueMode) {
+      PlayerQueueMode.sequence => PlayerQueueMode.singleRepeat,
+      PlayerQueueMode.singleRepeat => PlayerQueueMode.shuffle,
+      PlayerQueueMode.shuffle => PlayerQueueMode.sequence,
+    };
+    setQueueMode(nextMode);
+  }
+
+  void setQueueMode(PlayerQueueMode mode) {
+    if (state.queueMode == mode) {
+      return;
+    }
+    _queueManager.resetForMode(
+      mode: mode,
+      currentIndex: state.currentQueueIndex,
+    );
+    state = state.copyWith(queueMode: mode);
+    _publishPlaybackState();
+    unawaited(_persistQueueSnapshot());
+  }
+
+  Future<void> restoreFromPersistence() async {
+    final PersistedPlaybackQueue? snapshot = _queueRepository.load();
+    if (snapshot == null) {
+      return;
+    }
+
+    final int? restoredIndex = snapshot.sanitizedCurrentQueueIndex;
+    final List<PlayableItem> restoredQueue = snapshot.queue
+        .map((PersistedPlayableItem item) => item.toPlayableItem())
+        .toList(growable: false);
+    if (restoredQueue.isEmpty || restoredIndex == null) {
+      await _queueRepository.clear();
+      return;
+    }
+
+    final int generation = _nextGeneration();
+    _queueManager.resetForMode(
+      mode: snapshot.queueMode,
+      currentIndex: restoredIndex,
+    );
+    _resetEnginePlaybackSnapshot();
+    state = state.copyWith(
+      queue: List<PlayableItem>.unmodifiable(restoredQueue),
+      currentQueueIndex: restoredIndex,
+      currentItem: restoredQueue[restoredIndex],
+      queueMode: snapshot.queueMode,
+      queueSourceLabel: snapshot.queueSourceLabel,
+      availableParts: const <PlayableItem>[],
+      chapters: const <PlaybackChapter>[],
+      audioStream: null,
+      duration: null,
+      position: Duration.zero,
+      bufferedPosition: Duration.zero,
+      isLoading: false,
+      isReady: false,
+      isPlaying: false,
+      isBuffering: false,
+      statusHint: null,
+      errorMessage: null,
+    );
+    _publishPlaybackState();
+
+    final bool restored = await _session.load(
+      restoredIndex,
+      autoplay: false,
+      initialPosition: Duration(milliseconds: snapshot.resumePositionMs),
+      generation: generation,
+      persistAfterLoad: false,
+    );
+    if (!restored || !_isCurrentGeneration(generation)) {
+      return;
+    }
+
+    await _audioEngine.pause();
+    if (!_isCurrentGeneration(generation)) {
+      return;
+    }
+
+    state = state.copyWith(
+      isPlaying: false,
+      isBuffering: false,
+      position: state.position,
+    );
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  void _bindPlayerStreams() {
+    _subscriptions.add(
+      _audioEngine.positionStream.listen(_onEnginePositionChanged),
+    );
+    _subscriptions.add(
+      _audioEngine.bufferedPositionStream.listen(
+        _onEngineBufferedPositionChanged,
+      ),
+    );
+    _subscriptions.add(
+      _audioEngine.durationStream.listen(_onEngineDurationChanged),
+    );
+    _subscriptions.add(
+      _audioEngine.volumeStream.listen(_onEngineVolumeChanged),
+    );
+    _subscriptions.add(_audioEngine.errorStream.listen(_onEnginePlaybackError));
+    _subscriptions.add(
+      _audioEngine.playerStateStream.listen(_onEnginePlayerStateChanged),
+    );
+  }
+
+  void _onEnginePositionChanged(Duration position) {
+    final Duration? seekTarget = _pendingSeekTarget;
+    if (seekTarget != null) {
+      final bool reachedTarget =
+          (position - seekTarget).abs() <= const Duration(milliseconds: 1500);
+      if (!reachedTarget) {
+        return;
+      }
+      _pendingSeekTarget = null;
+    }
+    _applyEnginePlaybackChange(
+      _EnginePlaybackChange.position,
+      _enginePlaybackSnapshot.copyWith(position: position),
+    );
+    _emitPlayerEvent(PlayerEventType.position, position: position);
+    _persistProgressWhilePlaying(position);
+  }
+
+  // 自动存储进度
+  void _persistProgressWhilePlaying(Duration position) {
+    if (!state.isPlaying || !state.hasActiveQueueIndex) {
+      return;
+    }
+    if ((position - _lastPersistedProgress).abs() < _persistProgressStep) {
+      return;
+    }
+
+    _lastPersistedProgress = position;
+    unawaited(_persistQueueSnapshot());
+  }
+
+  void _onEngineBufferedPositionChanged(Duration bufferedPosition) {
+    _applyEnginePlaybackChange(
+      _EnginePlaybackChange.bufferedPosition,
+      _enginePlaybackSnapshot.copyWith(bufferedPosition: bufferedPosition),
+    );
+  }
+
+  void _onEngineDurationChanged(Duration? duration) {
+    if (duration == null) {
+      return;
+    }
+
+    _applyEnginePlaybackChange(
+      _EnginePlaybackChange.duration,
+      _enginePlaybackSnapshot.copyWith(duration: duration),
+    );
+    _emitPlayerEvent(PlayerEventType.duration);
+  }
+
+  void _onEngineVolumeChanged(double volume) {
+    final double nextVolume = volume.clamp(0.0, 1.0).toDouble();
+    if (nextVolume > 0) {
+      _lastAudibleVolume = nextVolume;
+    }
+
+    _applyEnginePlaybackChange(
+      _EnginePlaybackChange.volume,
+      _enginePlaybackSnapshot.copyWith(volume: nextVolume),
+    );
+  }
+
+  void _onEnginePlaybackError(PlayerEngineException error) {
+    if (_isRetryingPlayback ||
+        _session.isWaitingForRetry ||
+        state.isLoading ||
+        !state.hasActiveQueueIndex) {
+      return;
+    }
+
+    unawaited(_retryAfterEnginePlaybackError(error));
+  }
+
+  Future<void> _retryAfterEnginePlaybackError(
+    PlayerEngineException error,
+  ) async {
+    if (_isRetryingPlayback || !state.hasActiveQueueIndex) {
+      return;
+    }
+
+    _isRetryingPlayback = true;
+    final int generation = _nextGeneration();
+    final int queueIndex = state.currentQueueIndex!;
+    final Duration position = state.position;
+    try {
+      await _session.retryOrSkipFailedQueueItem(
+        error: error,
+        failedIndex: queueIndex,
+        autoplay: true,
+        initialPosition: position,
+        generation: generation,
+        persistAfterLoad: true,
+        retryCount: _session.engineRetryCount,
+        skippedUnavailableStableIds: const <String>{},
+      );
+    } finally {
+      _isRetryingPlayback = false;
+    }
+  }
+
+  void _onEnginePlayerStateChanged(PlayerEngineState playerState) {
+    _applyEnginePlaybackChange(
+      _EnginePlaybackChange.playerState,
+      _enginePlaybackSnapshot.copyWith(
+        playing: playerState.playing,
+        processingState: playerState.processingState,
+      ),
+    );
+    _emitPlayerEvent(
+      PlayerEventType.playbackState,
+      isPlaying: playerState.playing,
+    );
+  }
+
+  void _resetEnginePlaybackSnapshot({
+    double? volume,
+    PlayerEngineProcessingState processingState =
+        PlayerEngineProcessingState.idle,
+  }) {
+    // 切换音源时清掉临时播放字段，避免上一首的 completed 事件影响下一首。
+    _enginePlaybackSnapshot = _EnginePlaybackSnapshot(
+      volume: volume ?? _enginePlaybackSnapshot.volume,
+      processingState: processingState,
+    );
+  }
+
+  void _applyEnginePlaybackChange(
+    _EnginePlaybackChange change,
+    _EnginePlaybackSnapshot nextSnapshot,
+  ) {
+    final _EnginePlaybackSnapshot previousSnapshot = _enginePlaybackSnapshot;
+    _enginePlaybackSnapshot = nextSnapshot;
+    final _EnginePlaybackReduction reduction = _reduceEnginePlaybackSnapshot(
+      current: state,
+      previous: previousSnapshot,
+      next: nextSnapshot,
+      change: change,
+    );
+
+    // 先更新 PlayerState，再执行依赖它的发布和完成处理。
+    state = reduction.nextState;
+    if (reduction.shouldPublishPlaybackState) {
+      _publishPlaybackState(processingState: reduction.mediaProcessingState);
+    }
+    if (reduction.shouldHandleCompleted) {
+      _emitPlayerEvent(PlayerEventType.completed);
+      unawaited(_session.handlePlaybackCompleted(_operationGeneration));
+    }
+  }
+
+  void _emitPlayerEvent(
+    PlayerEventType type, {
+    Duration? position,
+    bool? isPlaying,
+  }) {
+    _eventHub.add(
+      PlayerEvent(
+        type: type,
+        item: state.currentItem,
+        position: position ?? state.position,
+        duration: state.duration,
+        isPlaying: isPlaying ?? state.isPlaying,
+      ),
+    );
+  }
+
+  _EnginePlaybackReduction _reduceEnginePlaybackSnapshot({
+    required PlayerState current,
+    required _EnginePlaybackSnapshot previous,
+    required _EnginePlaybackSnapshot next,
+    required _EnginePlaybackChange change,
+  }) {
+    return switch (change) {
+      _EnginePlaybackChange.position => _EnginePlaybackReduction(
+        nextState: current.copyWith(position: next.position),
+      ),
+      _EnginePlaybackChange.bufferedPosition => _EnginePlaybackReduction(
+        nextState: current.copyWith(bufferedPosition: next.bufferedPosition),
+      ),
+      _EnginePlaybackChange.duration => _EnginePlaybackReduction(
+        nextState: current.copyWith(duration: next.duration),
+      ),
+      _EnginePlaybackChange.volume => _EnginePlaybackReduction(
+        nextState: current.copyWith(volume: next.volume),
+        shouldPublishPlaybackState: false,
+      ),
+      _EnginePlaybackChange.playerState => _reduceEnginePlayerState(
+        current: current,
+        previous: previous,
+        next: next,
+      ),
+    };
+  }
+
+  _EnginePlaybackReduction _reduceEnginePlayerState({
+    required PlayerState current,
+    required _EnginePlaybackSnapshot previous,
+    required _EnginePlaybackSnapshot next,
+  }) {
+    final PlayerEngineProcessingState processingState = next.processingState;
+    final bool hasAcceptedSource = current.audioStream != null;
+    final bool isBuffering =
+        processingState.isBuffering && (current.isLoading || hasAcceptedSource);
+    final bool isReady = processingState.isReady && hasAcceptedSource;
+    final bool completed =
+        processingState == PlayerEngineProcessingState.completed;
+    final bool enteredCompleted =
+        completed &&
+        previous.processingState != PlayerEngineProcessingState.completed;
+    // 只处理进入 completed 的瞬间，忽略停留在 completed 的旧快照。
+    final bool shouldHandleCompleted =
+        enteredCompleted && !current.isLoading && hasAcceptedSource;
+
+    return _EnginePlaybackReduction(
+      nextState: current.copyWith(
+        isPlaying: next.playing && hasAcceptedSource,
+        isBuffering: isBuffering,
+        isReady: current.isLoading ? current.isReady : isReady,
+        statusHint: current.hasError
+            ? PlayerStatusHint.error
+            : current.isLoading
+            ? current.statusHint
+            : isBuffering
+            ? PlayerStatusHint.buffering
+            : null,
+        position: shouldHandleCompleted
+            ? (current.duration ?? current.position)
+            : current.position,
+      ),
+      mediaProcessingState: processingState.toAudioProcessingState(),
+      shouldHandleCompleted: shouldHandleCompleted,
+    );
+  }
+
+  @override
+  PlayerState get sessionState => state;
+
+  @override
+  set sessionState(PlayerState value) {
+    state = value;
+  }
+
+  @override
+  int nextGeneration() => _nextGeneration();
+
+  @override
+  bool isCurrentGeneration(int generation) => _isCurrentGeneration(generation);
+
+  @override
+  bool get isAdvancingQueue => _isAdvancingQueue;
+
+  @override
+  int? qualityOverrideFor(String stableId) => _qualityOverrides[stableId];
+
+  @override
+  PlayerAudioQualityPreference get qualityPreference =>
+      ref.read(playerAudioQualityPreferenceLogicProvider);
+
+  @override
+  void publishPlaybackState() => _publishPlaybackState();
+
+  @override
+  void scheduleChapterResolution() {
+    unawaited(_resolveChaptersForCurrentItem());
+  }
+
+  Future<void> _resolveChaptersForCurrentItem() async {
+    final PlayableItem? item = state.currentItem;
+    if (item == null) {
+      return;
+    }
+
+    final String stableId = item.stableId;
+    final List<PlaybackChapter> chapters;
+    try {
+      chapters = await _chapterRepository.fetchChapters(
+        item,
+        duration: state.duration,
+      );
+    } on Object catch (error) {
+      _logPlayerEvent(
+        'chapters:failed',
+        details: <String, Object?>{'error': error.toString()},
+      );
+      return;
+    }
+
+    if (!ref.mounted || state.currentItem?.stableId != stableId) {
+      return;
+    }
+    if (listEquals(state.chapters, chapters)) {
+      return;
+    }
+
+    state = state.copyWith(chapters: chapters);
+    _logPlayerEvent(
+      'chapters:resolved',
+      details: <String, Object?>{'count': chapters.length},
+    );
+  }
+
+  @override
+  Future<void> persistQueueSnapshot() => _persistQueueSnapshot();
+
+  @override
+  void resetEnginePlaybackSnapshot({
+    required PlayerEngineProcessingState processingState,
+  }) {
+    _resetEnginePlaybackSnapshot(processingState: processingState);
+  }
+
+  @override
+  void suspendListening() => _suspendListening();
+
+  @override
+  void logPlayerEvent(String event, {Map<String, Object?>? details}) {
+    _logPlayerEvent(event, details: details);
+  }
+
+  @override
+  void emitPlayerEvent(PlayerEventType type) => _emitPlayerEvent(type);
+
+  @override
+  Future<void> activateAudioSessionForPlayback() {
+    return _activateAudioSessionForPlayback();
+  }
+
+  @override
+  Future<void> playCurrentSource() => _playCurrentSource();
+
+  @override
+  Future<void> seekSession(Duration position) => seek(position);
+
+  @override
+  Future<void> skipToNextTrack() => skipToNext();
+
+  @override
+  Future<void> stopAudioEngine() => _audioEngine.stop();
+
+  @override
+  Future<void> pauseAudioEngine() => _audioEngine.pause();
+
+  @override
+  Future<Duration> resumeListeningPosition(
+    PlayableItem item, {
+    required Duration fallback,
+    required bool Function() isCurrent,
+    bool localOnly = false,
+  }) async {
+    _listening ??= ref.read(listeningProgressControllerProvider.notifier);
+    return _listening!.resumePosition(
+      item,
+      fallback: fallback,
+      isCurrent: isCurrent,
+      localOnly: localOnly,
+    );
+  }
+
+  @override
+  ({PlayableItem item, Duration position})? localResumePart(
+    List<PlayableItem> parts,
+  ) {
+    _listening ??= ref.read(listeningProgressControllerProvider.notifier);
+    return _listening!.localResumePart(parts);
+  }
+
+  @override
+  void beginListening(
+    PlayableItem item,
+    Duration position,
+    Duration? duration, {
+    bool trackProgress = false,
+  }) {
+    _listening?.begin(item, position, duration, trackProgress: trackProgress);
+  }
+
+  @override
+  void recordRecentPlayback(PlayableItem item) {
+    unawaited(
+      ref.read(recentPlaybackControllerProvider.notifier).recordItem(item),
+    );
+  }
+
+  @override
+  void showToast(String message) => ToastUtil.show(message);
+  int _nextGeneration() {
+    _operationGeneration += 1;
+    return _operationGeneration;
+  }
+
+  double _readPersistedVolume() {
+    return _settingsStore
+        .readDouble(HiveKeys.playerVolume, defaultValue: 1.0)
+        .clamp(0.0, 1.0)
+        .toDouble();
+  }
+
+  bool _isCurrentGeneration(int generation) {
+    return generation == _operationGeneration;
+  }
+
+  // 激活音频会话以进行播放。
+  Future<void> _activateAudioSessionForPlayback() async {
+    try {
+      await _audioSessionCoordinator.activateForPlayback();
+    } on Object catch (error) {
+      _logPlayerEvent(
+        'audioSession:activate-for-playback-failed',
+        details: <String, Object?>{'error': error},
+      );
+    }
+  }
+
+  // 播放当前源。
+  Future<void> _playCurrentSource() async {
+    final int generation = _operationGeneration;
+    await _activateAudioSessionForPlayback();
+    if (!_isCurrentGeneration(generation)) {
+      return;
+    }
+    await _audioEngine.play();
+  }
+
+  Future<void> _persistQueueSnapshot() async {
+    final PersistedPlaybackQueue? snapshot = _buildSnapshot();
+    if (snapshot == null) {
+      await _queueRepository.clear();
+      return;
+    }
+    await _queueRepository.save(snapshot);
+  }
+
+  PersistedPlaybackQueue? _buildSnapshot() {
+    if (!state.hasQueue) {
+      return null;
+    }
+
+    return PersistedPlaybackQueue(
+      queue: state.queue
+          .map(PersistedPlayableItem.fromPlayableItem)
+          .toList(growable: false),
+      currentQueueIndex: state.currentQueueIndex,
+      queueMode: state.queueMode,
+      queueSourceLabel: state.queueSourceLabel,
+      resumePositionMs: _resolveResumePositionMs(),
+      savedAtEpochMs: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  int _resolveResumePositionMs() {
+    if (!state.hasActiveQueueIndex) {
+      return 0;
+    }
+
+    final Duration position = state.position;
+    if (position <= Duration.zero) {
+      return 0;
+    }
+
+    final Duration? duration = state.duration;
+    if (duration == null || duration <= Duration.zero) {
+      return position.inMilliseconds;
+    }
+
+    final int remainingMs = duration.inMilliseconds - position.inMilliseconds;
+    if (remainingMs <= const Duration(seconds: 2).inMilliseconds) {
+      return 0;
+    }
+
+    if (position < const Duration(seconds: 3)) {
+      return 0;
+    }
+
+    return position.inMilliseconds.clamp(0, duration.inMilliseconds);
+  }
+
+  void _publishPlaybackState({AudioProcessingState? processingState}) {
+    _audioHandler.updatePlaybackSnapshot(
+      isPlaying: state.isPlaying,
+      isBuffering: state.isBuffering,
+      hasPrevious: state.hasPrevious,
+      hasNext: state.queueMode == PlayerQueueMode.singleRepeat || state.hasNext,
+      position: state.position,
+      bufferedPosition: state.bufferedPosition,
+      queueIndex: state.hasActiveQueueIndex ? state.currentQueueIndex : null,
+      speed: state.speed,
+      processingState:
+          processingState ??
+          (state.isLoading
+              ? AudioProcessingState.loading
+              : state.isBuffering
+              ? AudioProcessingState.buffering
+              : state.isReady
+              ? AudioProcessingState.ready
+              : AudioProcessingState.idle),
+    );
+    WindowsTaskbarThumbnailToolbar.instance.publish(
+      isPlaying: state.isPlaying,
+      hasPrevious: state.hasPrevious,
+      hasNext: state.queueMode == PlayerQueueMode.singleRepeat || state.hasNext,
+    );
+  }
+
+  void _logPlayerEvent(String event, {Map<String, Object?>? details}) {
+    final String detailText = details == null || details.isEmpty
+        ? ''
+        : details.entries
+              .map(
+                (MapEntry<String, Object?> entry) =>
+                    '${entry.key}=${entry.value}',
+              )
+              .join(', ');
+    _logger.d(
+      detailText.isEmpty
+          ? '[PlayerDebug] $event'
+          : '[PlayerDebug] $event | $detailText',
+    );
+  }
+
+  List<PlayableItem> _dedupeQueueItems(List<PlayableItem> items) {
+    final Set<String> seenIds = <String>{};
+    return items
+        .where((PlayableItem item) => seenIds.add(item.stableId))
+        .toList(growable: false);
+  }
+}
+
+enum _EnginePlaybackChange {
+  position,
+  bufferedPosition,
+  duration,
+  volume,
+  playerState,
+}
+
+extension on PlayerEngineProcessingState {
+  AudioProcessingState toAudioProcessingState() {
+    return switch (this) {
+      PlayerEngineProcessingState.idle => AudioProcessingState.idle,
+      PlayerEngineProcessingState.loading => AudioProcessingState.loading,
+      PlayerEngineProcessingState.buffering => AudioProcessingState.buffering,
+      PlayerEngineProcessingState.ready => AudioProcessingState.ready,
+      PlayerEngineProcessingState.completed => AudioProcessingState.completed,
+    };
+  }
+}
+
+class _EnginePlaybackSnapshot {
+  const _EnginePlaybackSnapshot({
+    this.position = Duration.zero,
+    this.bufferedPosition = Duration.zero,
+    this.duration,
+    this.volume = 1.0,
+    this.playing = false,
+    this.processingState = PlayerEngineProcessingState.idle,
+  });
+
+  final Duration position;
+  final Duration bufferedPosition;
+  final Duration? duration;
+  final double volume;
+  final bool playing;
+  final PlayerEngineProcessingState processingState;
+
+  _EnginePlaybackSnapshot copyWith({
+    Duration? position,
+    Duration? bufferedPosition,
+    Duration? duration,
+    double? volume,
+    bool? playing,
+    PlayerEngineProcessingState? processingState,
+  }) {
+    return _EnginePlaybackSnapshot(
+      position: position ?? this.position,
+      bufferedPosition: bufferedPosition ?? this.bufferedPosition,
+      duration: duration ?? this.duration,
+      volume: volume ?? this.volume,
+      playing: playing ?? this.playing,
+      processingState: processingState ?? this.processingState,
+    );
+  }
+}
+
+class _EnginePlaybackReduction {
+  const _EnginePlaybackReduction({
+    required this.nextState,
+    this.shouldPublishPlaybackState = true,
+    this.mediaProcessingState,
+    this.shouldHandleCompleted = false,
+  });
+
+  final PlayerState nextState;
+  final bool shouldPublishPlaybackState;
+  final AudioProcessingState? mediaProcessingState;
+  final bool shouldHandleCompleted;
+}

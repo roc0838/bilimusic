@@ -1,0 +1,413 @@
+import 'package:bilimusic/common/components/error_page.dart';
+import 'package:bilimusic/feature/comment/domain/comment_target.dart';
+import 'package:bilimusic/feature/comment/ui/comment_page.dart';
+import 'package:bilimusic/feature/download/ui/downloads_page.dart';
+import 'package:bilimusic/feature/download/ui/download_queue_page.dart';
+import 'package:bilimusic/feature/auth/ui/auth_page.dart';
+import 'package:bilimusic/feature/favorites/ui/desktop/desktop_favorite_collection_page.dart';
+import 'package:bilimusic/feature/favorites/ui/favorite_collection_page.dart';
+import 'package:bilimusic/feature/home/ui/home_page.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:bilimusic/feature/player/ui/desktop/desktop_player_page.dart';
+import 'package:bilimusic/feature/favorites/ui/import/import_page.dart';
+import 'package:bilimusic/feature/profile/ui/profile_page.dart';
+import 'package:bilimusic/feature/recent/ui/desktop/desktop_recent_playback_page.dart';
+import 'package:bilimusic/feature/recent/ui/recent_playback_page.dart';
+import 'package:bilimusic/feature/search/ui/search_page.dart';
+import 'package:bilimusic/feature/statistics/ui/song_statistics_page.dart';
+import 'package:bilimusic/core/layout/app_layout.dart';
+import 'package:bilimusic/feature/setting/ui/about_settings_page.dart';
+import 'package:bilimusic/feature/setting/ui/cache_settings_page.dart';
+import 'package:bilimusic/feature/setting/ui/app_transfer_page.dart';
+import 'package:bilimusic/feature/setting/ui/hotkey_settings_page.dart';
+import 'package:bilimusic/feature/setting/ui/player_settings_page.dart';
+import 'package:bilimusic/feature/setting/ui/setting_page.dart';
+import 'package:bilimusic/feature/setting/ui/theme_settings_page.dart';
+import 'package:bilimusic/feature/up/ui/collection_detail_page.dart';
+import 'package:bilimusic/feature/up/ui/desktop_up_page.dart';
+import 'package:bilimusic/feature/up/ui/favorite_up_list_page.dart';
+import 'package:bilimusic/feature/up/ui/up_page.dart';
+import 'package:bilimusic/router/shell/app_shell.dart';
+import 'package:bilimusic/router/car_ui_page.dart';
+import 'package:bilimusic/feature/home/ui/car/car_home_page.dart';
+import 'package:bilimusic/feature/profile/ui/car/car_profile_page.dart';
+import 'package:bilimusic/feature/favorites/ui/car/car_favorite_collection_page.dart';
+import 'package:bilimusic/feature/recent/ui/car/car_recent_playback_page.dart';
+import 'package:bilimusic/router/util/mobile_branch_navigator_keys.dart';
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:hugeicons/hugeicons.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+part 'routers.g.dart';
+
+final GlobalKey<NavigatorState> _rootNavigatorKey = GlobalKey<NavigatorState>();
+
+GlobalKey<NavigatorState> get rootNavigatorKey => _rootNavigatorKey;
+
+CommentTarget? commentTargetFromRoute({
+  required Object? extra,
+  required Map<String, String> queryParameters,
+}) {
+  if (extra is CommentTarget) {
+    return extra;
+  }
+  final int oid = int.tryParse(queryParameters['oid'] ?? '') ?? 0;
+  final int parsedAid = int.tryParse(queryParameters['aid'] ?? '') ?? 0;
+  final int aid = parsedAid > 0 ? parsedAid : oid;
+  final String bvid = queryParameters['bvid']?.trim() ?? '';
+  final int type = int.tryParse(queryParameters['type'] ?? '') ?? 1;
+  if (aid <= 0 && bvid.isEmpty) {
+    return null;
+  }
+  return CommentTarget(
+    oid: oid > 0 ? oid : aid,
+    type: type,
+    aid: aid > 0 ? aid : null,
+    bvid: bvid.isEmpty ? null : bvid,
+    title: queryParameters['title'],
+    coverUrl: queryParameters['cover'],
+  );
+}
+
+@riverpod
+GoRouter router(Ref ref) => GoRouter(
+  navigatorKey: _rootNavigatorKey,
+  initialLocation: '/home',
+  routes: AppLayout.isDesktopPlatform ? desktopRoutes : mobileRoutes,
+);
+
+final List<Map<String, dynamic>> mobileTabs = [
+  {
+    'path': '/home',
+    'builder': (context, state) => CarUiPage(
+      carBuilder: (_) => const CarHomePage(),
+      standardBuilder: (_) => const HomePage(),
+    ),
+    'icon': HugeIcon(icon: HugeIcons.strokeRoundedHome07),
+    'label': '首页',
+  },
+  {
+    'path': '/profile',
+    'builder': (context, state) => CarUiPage(
+      carBuilder: (_) => const CarProfilePage(),
+      standardBuilder: (_) => const ProfilePage(),
+    ),
+    'routes': <RouteBase>[
+      GoRoute(path: 'import', builder: (context, state) => const ImportPage()),
+      GoRoute(
+        path: 'downloads',
+        builder: (context, state) => const DownloadsPage(),
+        routes: <RouteBase>[
+          GoRoute(
+            path: 'queue',
+            builder: (context, state) => const DownloadQueuePage(),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: 'favorite-ups',
+        builder: (context, state) => const FavoriteUpListPage(),
+      ),
+      GoRoute(
+        path: 'recent',
+        builder: (context, state) {
+          return CarUiPage(
+            carBuilder: (_) => const CarRecentPlaybackPage(),
+            standardBuilder: (_) =>
+                AppLayoutScope.of(context) == AppLayout.desktop
+                ? const DesktopRecentPlaybackPage()
+                : const RecentPlaybackPage(),
+          );
+        },
+      ),
+      GoRoute(
+        path: 'favorites/:collectionId',
+        builder: (context, state) {
+          final String collectionId = state.pathParameters['collectionId']!;
+          return CarUiPage(
+            carBuilder: (_) =>
+                CarFavoriteCollectionPage(collectionId: collectionId),
+            standardBuilder: (_) =>
+                AppLayoutScope.of(context) == AppLayout.desktop
+                ? DesktopFavoriteCollectionPage(collectionId: collectionId)
+                : FavoriteCollectionPage(collectionId: collectionId),
+          );
+        },
+      ),
+    ],
+    'icon': HugeIcon(icon: HugeIcons.strokeRoundedUser),
+    'label': '我的',
+  },
+];
+
+final List<Map<String, dynamic>> mobileHiddenBranches = [
+  {'path': '/search', 'builder': (context, state) => const SearchPage()},
+  {
+    'path': '/up',
+    'builder': (context, state) =>
+        const ErrorPage(message: 'Up Page Not Found'),
+    'routes': [
+      GoRoute(
+        path: ':mid',
+        builder: (context, state) {
+          final mid = int.parse(state.pathParameters['mid']!);
+          return UpPage(mid: mid);
+        },
+        routes: [
+          GoRoute(
+            path: 'collection/:seasonId', // 完整路径 /up/:mid/collection/:seasonId
+            builder: (context, state) {
+              final mid = int.parse(state.pathParameters['mid']!);
+              final seasonId = int.parse(state.pathParameters['seasonId']!);
+              return CollectionDetailPage(mid: mid, seasonId: seasonId);
+            },
+          ),
+        ],
+      ),
+    ],
+  },
+  {
+    'path': '/comments',
+    'builder': (context, state) {
+      final CommentTarget? target = commentTargetFromRoute(
+        extra: state.extra,
+        queryParameters: state.uri.queryParameters,
+      );
+      if (target == null) {
+        return const ErrorPage(message: '缺少评论目标参数');
+      }
+      return CommentPage(target: target);
+    },
+  },
+  {
+    'path': '/settings',
+    'builder': (context, state) => const SettingPage(),
+    'routes': <RouteBase>[
+      GoRoute(
+        path: 'theme',
+        builder: (context, state) => const ThemeSettingsPage(),
+      ),
+      GoRoute(
+        path: 'cache',
+        builder: (context, state) => const CacheSettingsPage(),
+      ),
+      GoRoute(
+        path: 'player',
+        builder: (context, state) => const PlayerSettingsPage(),
+      ),
+      GoRoute(
+        path: 'downloads',
+        builder: (context, state) => const DownloadsPage(),
+        routes: <RouteBase>[
+          GoRoute(
+            path: 'queue',
+            builder: (context, state) => const DownloadQueuePage(),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: 'app-transfer',
+        builder: (context, state) => const AppTransferPage(),
+      ),
+      GoRoute(
+        path: 'hotkeys',
+        builder: (context, state) => const HotkeySettingsPage(),
+      ),
+      GoRoute(
+        path: 'about',
+        builder: (context, state) => const AboutSettingsPage(),
+      ),
+    ],
+  },
+];
+
+final List<Map<String, dynamic>> desktopTabs = [
+  ...mobileTabs,
+  {
+    'path': '/search',
+    'builder': (context, state) => const SearchPage(),
+    'icon': Icons.search,
+    'label': '搜索',
+  },
+  {
+    'path': '/settings',
+    'builder': (context, state) => const SettingPage(),
+    'routes': <RouteBase>[
+      GoRoute(
+        path: 'theme',
+        builder: (context, state) => const ThemeSettingsPage(),
+      ),
+      GoRoute(
+        path: 'cache',
+        builder: (context, state) => const CacheSettingsPage(),
+      ),
+      GoRoute(
+        path: 'player',
+        builder: (context, state) => const PlayerSettingsPage(),
+      ),
+      GoRoute(
+        path: 'downloads',
+        builder: (context, state) => const DownloadsPage(),
+        routes: <RouteBase>[
+          GoRoute(
+            path: 'queue',
+            builder: (context, state) => const DownloadQueuePage(),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: 'app-transfer',
+        builder: (context, state) => const AppTransferPage(),
+      ),
+      GoRoute(
+        path: 'hotkeys',
+        builder: (context, state) => const HotkeySettingsPage(),
+      ),
+      GoRoute(
+        path: 'about',
+        builder: (context, state) => const AboutSettingsPage(),
+      ),
+    ],
+    'icon': Icons.settings,
+    'label': '设置',
+  },
+  {
+    'path': '/comments',
+    'builder': (context, state) {
+      final CommentTarget? target = commentTargetFromRoute(
+        extra: state.extra,
+        queryParameters: state.uri.queryParameters,
+      );
+      if (target == null) {
+        return const ErrorPage(message: '缺少评论目标参数');
+      }
+      return CommentPage(target: target);
+    },
+  },
+];
+
+final List<Map<String, dynamic>> desktopHiddenBranches = [
+  {
+    'path': '/up',
+    'builder': (context, state) =>
+        const ErrorPage(message: 'Up Page Not Found'),
+    'routes': [
+      GoRoute(
+        path: ':mid',
+        builder: (context, state) {
+          final mid = int.parse(state.pathParameters['mid']!);
+          return DesktopUpPage(mid: mid);
+        },
+        routes: [
+          GoRoute(
+            path: 'collection/:seasonId',
+            builder: (context, state) {
+              final mid = int.parse(state.pathParameters['mid']!);
+              final seasonId = int.parse(state.pathParameters['seasonId']!);
+              return CollectionDetailPage(mid: mid, seasonId: seasonId);
+            },
+          ),
+        ],
+      ),
+    ],
+  },
+];
+
+final List<RouteBase> mobileRoutes = [
+  GoRoute(path: '/auth', builder: (context, state) => const AuthPage()),
+  GoRoute(
+    path: '/statistics/song',
+    parentNavigatorKey: _rootNavigatorKey,
+    builder: (context, state) =>
+        SongStatisticsPage(item: state.extra! as PlayableItem),
+  ),
+  StatefulShellRoute.indexedStack(
+    parentNavigatorKey: _rootNavigatorKey,
+    builder: (context, state, navigationShell) {
+      return AppShell(
+        navigationShell: navigationShell,
+        currentLocation: state.uri.path,
+      );
+    },
+    branches: [
+      ...<Map<String, dynamic>>[
+        ...mobileTabs,
+        ...mobileHiddenBranches,
+      ].asMap().entries.map(
+        (entry) => StatefulShellBranch(
+          navigatorKey: mobileBranchNavigatorKeys[entry.key],
+          routes: [
+            GoRoute(
+              path: entry.value['path'] as String,
+              builder: entry.value['builder'] as GoRouterWidgetBuilder,
+              routes:
+                  entry.value['routes'] as List<RouteBase>? ??
+                  const <RouteBase>[],
+            ),
+          ],
+        ),
+      ),
+    ],
+  ),
+];
+
+final List<RouteBase> desktopRoutes = [
+  GoRoute(path: '/auth', builder: (context, state) => const AuthPage()),
+  GoRoute(
+    path: '/statistics/song',
+    parentNavigatorKey: _rootNavigatorKey,
+    builder: (context, state) =>
+        SongStatisticsPage(item: state.extra! as PlayableItem),
+  ),
+  GoRoute(
+    path: '/player',
+    parentNavigatorKey: _rootNavigatorKey,
+    pageBuilder: (context, state) {
+      final PlayableItem? item = state.extra as PlayableItem?;
+      return CustomTransitionPage<void>(
+        key: state.pageKey,
+        child: DesktopPlayerPage(initialItem: item),
+        transitionDuration: const Duration(milliseconds: 450),
+        reverseTransitionDuration: const Duration(milliseconds: 400),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final Animation<Offset> offsetAnimation =
+              Tween<Offset>(
+                begin: const Offset(0, 1),
+                end: Offset.zero,
+              ).animate(
+                CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                  reverseCurve: Curves.easeInCubic,
+                ),
+              );
+
+          return SlideTransition(position: offsetAnimation, child: child);
+        },
+      );
+    },
+  ),
+  StatefulShellRoute.indexedStack(
+    parentNavigatorKey: _rootNavigatorKey,
+    builder: (context, state, navigationShell) {
+      return AppShell(
+        navigationShell: navigationShell,
+        currentLocation: state.uri.path,
+      );
+    },
+    branches: [
+      ...<Map<String, dynamic>>[...desktopTabs, ...desktopHiddenBranches].map(
+        (tab) => StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: tab['path'] as String,
+              builder: tab['builder'] as GoRouterWidgetBuilder,
+              routes: tab['routes'] as List<RouteBase>? ?? const <RouteBase>[],
+            ),
+          ],
+        ),
+      ),
+    ],
+  ),
+];

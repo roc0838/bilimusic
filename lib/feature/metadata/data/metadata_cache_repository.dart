@@ -1,0 +1,78 @@
+import 'package:bilimusic/feature/metadata/domain/metadata.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:hive_ce/hive.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+
+part 'metadata_cache_repository.g.dart';
+
+const String metadataCacheBoxName = 'metadata_cache';
+
+@riverpod
+MetadataCacheRepository metadataCacheRepository(Ref ref) {
+  return MetadataCacheRepository(Hive.lazyBox<Metadata>(metadataCacheBoxName));
+}
+
+class MetadataCacheRepository {
+  MetadataCacheRepository(this._box);
+
+  final LazyBox<Metadata> _box;
+
+  String buildCacheKey({required PlayableItem item, int? chapterStartMs}) {
+    return buildContentCacheKey(item.contentId, chapterStartMs: chapterStartMs);
+  }
+
+  String buildContentCacheKey(String contentId, {int? chapterStartMs}) {
+    final String base = 'metadata:$contentId';
+    if (chapterStartMs == null) {
+      return base;
+    }
+    return '$base:chapter@$chapterStartMs';
+  }
+
+  Future<Metadata?> getCachedMetadataByContentId(String contentId) {
+    return _box.get(buildContentCacheKey(contentId));
+  }
+
+  Future<Metadata?> getCachedMetadata({
+    required PlayableItem item,
+    int? chapterStartMs,
+  }) async {
+    final String key = buildCacheKey(
+      item: item,
+      chapterStartMs: chapterStartMs,
+    );
+    final Metadata? metadata = await _box.get(key);
+    if (metadata == null) {
+      return null;
+    }
+
+    return metadata.copyWith(stableId: item.stableId);
+  }
+
+  Future<void> putCachedMetadata({
+    required PlayableItem item,
+    required Metadata metadata,
+    int? chapterStartMs,
+  }) async {
+    await _box.put(
+      buildCacheKey(item: item, chapterStartMs: chapterStartMs),
+      metadata.copyWith(
+        stableId: item.stableId,
+        updatedAt: metadata.updatedAt ?? DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> removeCachedMetadata({
+    required PlayableItem item,
+    int? chapterStartMs,
+  }) {
+    return _box.delete(
+      buildCacheKey(item: item, chapterStartMs: chapterStartMs),
+    );
+  }
+
+  Future<void> clear() {
+    return _box.clear();
+  }
+}

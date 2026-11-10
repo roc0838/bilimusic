@@ -1,0 +1,179 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
+
+const String desktopSidePanelTag = 'desktop_side_panel';
+
+final GlobalKey desktopSidePanelHostKey = GlobalKey(
+  debugLabel: 'desktop_side_panel_host',
+);
+
+final Set<String> _activeDesktopSidePanelTags = <String>{};
+final Map<String, int> _desktopSidePanelTokens = <String, int>{};
+
+class DesktopSidePanel extends StatelessWidget {
+  const DesktopSidePanel({
+    super.key,
+    required this.child,
+    this.height = double.infinity,
+    this.width = 420,
+    this.padding = EdgeInsets.zero,
+    this.backgroundColor,
+    this.borderRadius = const BorderRadius.all(Radius.circular(12)),
+    this.clipBehavior = Clip.antiAlias,
+  });
+
+  final Widget child;
+  final double height;
+  final double width;
+  final EdgeInsetsGeometry padding;
+  final Color? backgroundColor;
+  final BorderRadiusGeometry borderRadius;
+  final Clip clipBehavior;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colorScheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: width,
+        height: height,
+        padding: padding,
+        clipBehavior: clipBehavior,
+        decoration: BoxDecoration(
+          color: backgroundColor ?? colorScheme.surface,
+          borderRadius: borderRadius,
+          border: Border(
+            left: BorderSide(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.55),
+            ),
+          ),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: colorScheme.shadow.withValues(alpha: 0.14),
+              blurRadius: 28,
+              offset: const Offset(-10, 0),
+            ),
+          ],
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+Future<void> showDesktopSidePanel({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  double height = double.infinity,
+  double width = 420,
+  EdgeInsetsGeometry padding = EdgeInsets.zero,
+  Color? backgroundColor,
+  BorderRadiusGeometry borderRadius = const BorderRadius.all(
+    Radius.circular(8),
+  ),
+  Clip clipBehavior = Clip.antiAlias,
+  Color? maskColor,
+  bool clickMaskDismiss = true,
+  bool keepSingle = true,
+  String tag = desktopSidePanelTag,
+}) async {
+  final bool isActive = _activeDesktopSidePanelTags.contains(tag);
+  final bool exists = SmartDialog.checkExist(tag: tag);
+  if (isActive || exists) {
+    _activeDesktopSidePanelTags.remove(tag);
+    await SmartDialog.dismiss<void>(tag: tag);
+    return;
+  }
+
+  final int token = (_desktopSidePanelTokens[tag] ?? 0) + 1;
+  _desktopSidePanelTokens[tag] = token;
+  _activeDesktopSidePanelTags.add(tag);
+
+  final MediaQueryData mediaQuery = MediaQuery.of(context);
+  final Size screenSize = mediaQuery.size;
+  final Rect? hostRect = _resolveDesktopSidePanelHostRect();
+  final double resolvedHeight = hostRect?.height ?? height;
+  final double top = hostRect?.top ?? 0;
+  final double right = hostRect == null ? 0 : screenSize.width - hostRect.right;
+
+  await SmartDialog.show<void>(
+    tag: tag,
+    usePenetrate: true,
+    alignment: Alignment.topRight,
+    maskColor: maskColor ?? Colors.transparent,
+    animationTime: const Duration(milliseconds: 180),
+    animationBuilder: (controller, child, animationParam) {
+      final Animation<Offset> animation =
+          Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero).animate(
+            CurvedAnimation(
+              parent: controller,
+              curve: Curves.easeOutCubic,
+              reverseCurve: Curves.easeInCubic,
+            ),
+          );
+
+      return SlideTransition(position: animation, child: child);
+    },
+    clickMaskDismiss: clickMaskDismiss,
+    keepSingle: keepSingle,
+    onDismiss: () {
+      Future<void>.delayed(const Duration(milliseconds: 220), () {
+        if (_desktopSidePanelTokens[tag] == token &&
+            !SmartDialog.checkExist(tag: tag)) {
+          _activeDesktopSidePanelTags.remove(tag);
+        }
+      });
+    },
+    builder: (BuildContext context) {
+      return Padding(
+        padding: EdgeInsets.only(top: top, right: right),
+        child: DesktopSidePanel(
+          height: resolvedHeight,
+          width: width,
+          padding: padding,
+          backgroundColor: backgroundColor,
+          borderRadius: borderRadius,
+          clipBehavior: clipBehavior,
+          child: _DesktopSidePanelNavigatorHost(builder: builder),
+        ),
+      );
+    },
+  );
+}
+
+class _DesktopSidePanelNavigatorHost extends StatelessWidget {
+  const _DesktopSidePanelNavigatorHost({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return Navigator(
+      onGenerateRoute: (RouteSettings settings) {
+        return PageRouteBuilder<void>(
+          settings: settings,
+          pageBuilder: (BuildContext context, _, _) => builder(context),
+          transitionDuration: Duration.zero,
+          reverseTransitionDuration: Duration.zero,
+        );
+      },
+    );
+  }
+}
+
+Rect? _resolveDesktopSidePanelHostRect() {
+  final BuildContext? context = desktopSidePanelHostKey.currentContext;
+  if (context == null) {
+    return null;
+  }
+
+  final RenderObject? renderObject = context.findRenderObject();
+  if (renderObject is! RenderBox || !renderObject.hasSize) {
+    return null;
+  }
+
+  final Offset topLeft = renderObject.localToGlobal(Offset.zero);
+  return topLeft & renderObject.size;
+}

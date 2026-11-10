@@ -1,0 +1,2012 @@
+import 'dart:async';
+
+import 'package:bilimusic/common/components/badged_icon_button.dart';
+import 'package:bilimusic/feature/favorites/domain/favorites_state.dart';
+import 'package:bilimusic/feature/favorites/logic/favorites_controller.dart';
+import 'package:bilimusic/feature/metadata/domain/metadata.dart';
+import 'package:bilimusic/feature/metadata/domain/metadata_state.dart';
+import 'package:bilimusic/feature/metadata/logic/metadata_controller.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:bilimusic/feature/player/domain/player_display_info.dart';
+import 'package:bilimusic/feature/player/domain/player_lyric_settings.dart';
+import 'package:bilimusic/feature/player/domain/player_online_audience.dart';
+import 'package:bilimusic/feature/player/domain/player_state.dart';
+import 'package:bilimusic/feature/player/domain/playback_chapter.dart';
+import 'package:bilimusic/feature/player/logic/lyrics/desktop_lyrics_controller.dart';
+import 'package:bilimusic/feature/player/logic/player_controller.dart';
+import 'package:bilimusic/feature/player/logic/display/player_cover_color_provider.dart';
+import 'package:bilimusic/feature/player/logic/display/player_display_settings_logic.dart';
+import 'package:bilimusic/feature/player/logic/display/player_display_source_logic.dart';
+import 'package:bilimusic/feature/player/logic/lyrics/player_lyric_settings_logic.dart';
+import 'package:bilimusic/feature/player/logic/player_online_audience_controller.dart';
+import 'package:bilimusic/feature/player/ui/mini/mini_player_bar.dart';
+import 'package:bilimusic/feature/player/ui/mini/mini_player_content.dart';
+import 'package:bilimusic/feature/player/ui/mini/mini_player_glass_bar.dart';
+import 'package:bilimusic/feature/player/ui/components/player_artwork.dart';
+import 'package:bilimusic/feature/player/ui/components/player_cover_browser_page.dart';
+import 'package:bilimusic/feature/player/ui/components/player_controls.dart';
+import 'package:bilimusic/feature/player/ui/components/player_dynamic_backdrop.dart';
+import 'package:bilimusic/feature/player/ui/components/player_landscape_page.dart';
+import 'package:bilimusic/feature/player/ui/components/player_landscape_controls.dart';
+import 'package:bilimusic/feature/player/ui/components/player_main_page.dart';
+import 'package:bilimusic/feature/player/ui/components/player_shared.dart';
+import 'package:bilimusic/feature/player/ui/components/player_top_bar.dart';
+import 'package:bilimusic/feature/player/ui/lyrics/player_lyric_page.dart';
+import 'package:bilimusic/feature/player/ui/desktop/desktop_player_bar.dart';
+import 'package:bilimusic/feature/player/ui/player_page.dart';
+import 'package:bilimusic/router/util/player_page_route.dart';
+import 'package:coverflow_carousel/coverflow_carousel.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_lyric/flutter_lyric.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
+
+const PlayableItem _item = PlayableItem(
+  aid: 1,
+  bvid: 'BV1xx411c7mD',
+  title: 'Video title',
+  author: 'Video UP',
+  ownerMid: 123,
+  coverUrl: '',
+);
+
+final Metadata _metadata = Metadata(
+  stableId: _item.stableId,
+  title: 'Song title',
+  artist: 'Song artist',
+);
+
+void main() {
+  Future<ProviderContainer> openPlayerRoute(
+    WidgetTester tester, {
+    Size size = const Size(420, 900),
+    TextScaler textScaler = TextScaler.noScaling,
+  }) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata,
+      size: size,
+      textScaler: textScaler,
+      home: Builder(
+        builder: (BuildContext context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(
+              context,
+            ).push<void>(PlayerPageRoute(builder: (_) => const PlayerPage())),
+            child: const Text('原页面'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('原页面'));
+    await tester.pumpAndSettle();
+    return container;
+  }
+
+  testWidgets(
+    'drag moves the entire page and springs back when cancelled',
+    (WidgetTester tester) async {
+      await openPlayerRoute(tester);
+      final Offset pageBefore = tester.getTopLeft(find.byType(PlayerPage));
+      final Offset topBefore = tester.getTopLeft(find.byType(PlayerTopBar));
+      final Offset coverBefore = tester.getTopLeft(
+        find.byType(PlayerArtworkFrame),
+      );
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byType(PlayerMainPage)),
+      );
+      await gesture.moveBy(const Offset(0, 60));
+      await tester.pump();
+
+      expect(
+        tester.getTopLeft(find.byType(PlayerPage)).dy,
+        closeTo(pageBefore.dy + 60, 0.01),
+      );
+      expect(
+        tester.getTopLeft(find.byType(PlayerTopBar)).dy,
+        closeTo(topBefore.dy + 60, 0.01),
+      );
+      expect(
+        tester.getTopLeft(find.byType(PlayerArtworkFrame)).dy,
+        closeTo(coverBefore.dy + 60, 0.01),
+      );
+      expect(find.text('原页面'), findsOneWidget);
+      expect(
+        ModalRoute.of(tester.element(find.text('原页面')))!.offstage,
+        isFalse,
+      );
+      final NavigatorState navigator = tester.state(find.byType(Navigator));
+      expect(navigator.userGestureInProgress, isTrue);
+
+      await gesture.cancel();
+      await tester.pump(const Duration(milliseconds: 100));
+      final double returningY = tester.getTopLeft(find.byType(PlayerPage)).dy;
+      expect(returningY, inExclusiveRange(pageBefore.dy, pageBefore.dy + 60));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(find.byType(PlayerPage)), pageBefore);
+      expect(navigator.userGestureInProgress, isFalse);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'dismiss continues from dragged position without jumping',
+    (WidgetTester tester) async {
+      await openPlayerRoute(tester);
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byType(PlayerMainPage)),
+      );
+      await gesture.moveBy(const Offset(0, 140));
+      await tester.pump();
+      final double draggedY = tester.getTopLeft(find.byType(PlayerPage)).dy;
+      expect(draggedY, closeTo(140, 0.01));
+      await gesture.up();
+      await tester.pump();
+      expect(
+        tester.getTopLeft(find.byType(PlayerPage)).dy,
+        closeTo(draggedY, 0.01),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        tester.getTopLeft(find.byType(PlayerPage)).dy,
+        greaterThan(draggedY),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsNothing);
+      expect(
+        tester
+            .state<NavigatorState>(find.byType(Navigator))
+            .userGestureInProgress,
+        isFalse,
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'rotation cancels an active drag and releases navigator gesture state',
+    (WidgetTester tester) async {
+      await openPlayerRoute(tester);
+      final NavigatorState navigator = tester.state(find.byType(Navigator));
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byType(PlayerMainPage)),
+      );
+      await gesture.moveBy(const Offset(0, 60));
+      await tester.pump();
+      expect(navigator.userGestureInProgress, isTrue);
+      tester.view.physicalSize = const Size(900, 420);
+      await tester.pumpAndSettle();
+      await gesture.cancel();
+      expect(find.byType(PlayerLandscapePage), findsOneWidget);
+      expect(tester.getTopLeft(find.byType(PlayerPage)).dy, 0);
+      expect(navigator.userGestureInProgress, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'Android does not move or dismiss the page on downward drag',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await openPlayerRoute(tester);
+      final PlayerState playbackBefore = container.read(
+        playerControllerProvider,
+      );
+      final Offset pageBefore = tester.getTopLeft(find.byType(PlayerPage));
+      final NavigatorState navigator = tester.state(find.byType(Navigator));
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(find.byType(PlayerMainPage)),
+      );
+      await gesture.moveBy(const Offset(0, 180));
+      await tester.pump();
+      expect(tester.getTopLeft(find.byType(PlayerPage)), pageBefore);
+      expect(navigator.userGestureInProgress, isFalse);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsOneWidget);
+      expect(container.read(playerControllerProvider), playbackBefore);
+      await tester.dragFrom(
+        tester.getCenter(find.byType(PlayerMainPage)),
+        const Offset(-350, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).controller!.page,
+        2,
+      );
+      await tester.tap(find.byTooltip('收起播放页'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsNothing);
+      expect(find.text('原页面'), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  for (final bool fling in <bool>[false, true]) {
+    testWidgets(
+      'main page downward drag closes player (fling: $fling)',
+      (WidgetTester tester) async {
+        final ProviderContainer container = await openPlayerRoute(tester);
+        final PlayerState before = container.read(playerControllerProvider);
+        final Offset start = tester.getCenter(find.byType(PlayerMainPage));
+        if (fling) {
+          await tester.flingFrom(start, const Offset(0, 65), 1000);
+        } else {
+          await tester.timedDragFrom(
+            start,
+            const Offset(0, 140),
+            const Duration(seconds: 1),
+          );
+        }
+        await tester.pumpAndSettle();
+
+        expect(find.byType(PlayerPage), findsNothing);
+        expect(find.text('原页面'), findsOneWidget);
+        expect(container.read(playerControllerProvider), before);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  }
+
+  testWidgets(
+    'main page ignores small, upward and cancelled drags',
+    (WidgetTester tester) async {
+      await openPlayerRoute(tester);
+      final Offset start = tester.getCenter(find.byType(PlayerMainPage));
+      for (final Offset offset in <Offset>[
+        const Offset(0, 30),
+        const Offset(0, -140),
+      ]) {
+        await tester.timedDragFrom(start, offset, const Duration(seconds: 1));
+        await tester.pumpAndSettle();
+        expect(find.byType(PlayerPage), findsOneWidget);
+      }
+      final TestGesture gesture = await tester.startGesture(start);
+      await gesture.moveBy(const Offset(0, 140));
+      await gesture.cancel();
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  for (final double direction in <double>[-1, 1]) {
+    testWidgets(
+      'downward drag locks horizontal paging (direction: $direction)',
+      (WidgetTester tester) async {
+        await openPlayerRoute(tester);
+        final PageController controller = tester
+            .widget<PageView>(find.byType(PageView))
+            .controller!;
+        final Offset coverBefore = tester.getTopLeft(
+          find.byType(PlayerArtworkFrame),
+        );
+        final TestGesture gesture = await tester.startGesture(
+          tester.getCenter(find.byType(PlayerMainPage)),
+        );
+        await gesture.moveBy(Offset(12 * direction, 40));
+        await tester.pump();
+        expect(
+          tester.getTopLeft(find.byType(PlayerPage)).dy,
+          closeTo(40, 0.01),
+        );
+        for (int step = 0; step < 4; step++) {
+          await gesture.moveBy(Offset(40 * direction, 5));
+          await tester.pump(const Duration(milliseconds: 16));
+          expect(controller.page, closeTo(1, 0.001));
+          expect(
+            tester.getTopLeft(find.byType(PlayerArtworkFrame)).dx,
+            closeTo(coverBefore.dx, 0.01),
+          );
+        }
+        await gesture.cancel();
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(find.byType(PlayerPage)).dy, 0);
+        expect(controller.page, 1);
+        await tester.dragFrom(
+          tester.getCenter(find.byType(PlayerMainPage)),
+          const Offset(-350, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(controller.page, 2);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  }
+
+  testWidgets(
+    'main page horizontal swipe still opens lyrics',
+    (WidgetTester tester) async {
+      await openPlayerRoute(tester);
+      await tester.dragFrom(
+        tester.getCenter(find.byType(PlayerMainPage)),
+        const Offset(-350, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PlayerPage), findsOneWidget);
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).controller!.page,
+        2,
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'progress drag does not become a downward dismiss',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await openPlayerRoute(tester);
+      final Rect slider = tester.getRect(find.byType(Slider));
+      final TestGesture gesture = await tester.startGesture(
+        Offset(slider.left + 24, slider.center.dy),
+      );
+      await gesture.moveBy(const Offset(100, 0));
+      await tester.pump(const Duration(milliseconds: 100));
+      await gesture.moveBy(const Offset(0, 140));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PlayerPage), findsOneWidget);
+      expect(
+        (container.read(playerControllerProvider.notifier)
+                as _FakePlayerController)
+            .progressSeeks,
+        isNotEmpty,
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'compact main page scrolls back without dismissing player',
+    (WidgetTester tester) async {
+      await openPlayerRoute(
+        tester,
+        size: const Size(320, 568),
+        textScaler: TextScaler.linear(2),
+      );
+      final Finder scrollView = find.descendant(
+        of: find.byType(PlayerMainPage),
+        matching: find.byType(SingleChildScrollView),
+      );
+      final ScrollController controller = tester
+          .widget<SingleChildScrollView>(scrollView)
+          .controller!;
+      expect(controller.position.maxScrollExtent, greaterThan(0));
+      controller.jumpTo(controller.position.maxScrollExtent);
+      await tester.pump();
+      final double before = controller.offset;
+      await tester.timedDragFrom(
+        tester.getCenter(find.byType(PlayerMainPage)),
+        const Offset(0, 140),
+        const Duration(seconds: 1),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(PlayerPage), findsOneWidget);
+      expect(controller.offset, lessThan(before));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  for (final double textScale in <double>[1, 2]) {
+    testWidgets(
+      'slim minibar fits text at scale $textScale and keeps actions',
+      (WidgetTester tester) async {
+        int openCalls = 0;
+        int toggleCalls = 0;
+        await _pumpPlayer(
+          tester,
+          _metadata,
+          textScaler: TextScaler.linear(textScale),
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: MiniPlayerBar(
+                state: const PlayerState(currentItem: _item),
+                onTap: () => openCalls++,
+                onTogglePlayback: () => toggleCalls++,
+              ),
+            ),
+          ),
+        );
+
+        final double height = tester.getSize(find.byType(MiniPlayerBar)).height;
+        expect(height, textScale == 1 ? 50 : greaterThan(50));
+        expect(
+          tester.getSize(find.byType(MiniPlayerArtwork)),
+          const Size(36, 36),
+        );
+        expect(
+          tester.getSize(find.byType(MiniPlayerPlaybackButton)),
+          const Size(44, 44),
+        );
+        await tester.tap(
+          find.descendant(
+            of: find.byType(MiniPlayerPlaybackButton),
+            matching: find.byType(IconButton),
+          ),
+        );
+        expect(toggleCalls, 1);
+        expect(openCalls, 0);
+        expect(
+          tester
+              .widget<IconButton>(
+                find.byWidgetPredicate(
+                  (Widget widget) =>
+                      widget is IconButton && widget.tooltip == '播放队列',
+                ),
+              )
+              .onPressed,
+          isNull,
+        );
+        await tester.tap(find.byTooltip('播放队列'));
+        expect(openCalls, 0);
+        await tester.tap(find.byType(MiniPlayerArtwork));
+        expect(openCalls, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final double textScale in <double>[1, 2]) {
+    testWidgets(
+      'glass minibar inflates, resets and keeps actions at scale $textScale',
+      (WidgetTester tester) async {
+        int openCalls = 0;
+        int toggleCalls = 0;
+        await _pumpPlayer(
+          tester,
+          _metadata,
+          textScaler: TextScaler.linear(textScale),
+          home: GlassTheme(
+            data: GlassThemeData.simple(quality: GlassQuality.minimal),
+            child: Scaffold(
+              body: Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: MiniPlayerGlassBar(
+                    state: const PlayerState(currentItem: _item),
+                    onTap: () => openCalls++,
+                    onTogglePlayback: () => toggleCalls++,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final Finder artwork = find.byType(MiniPlayerArtwork);
+        final double restingWidth = tester.getRect(artwork).width;
+        final double restingHeight = tester
+            .getSize(find.byType(MiniPlayerGlassBar))
+            .height;
+        expect(restingHeight, textScale == 1 ? 48 : greaterThan(48));
+
+        final TestGesture press = await tester.startGesture(
+          tester.getCenter(artwork),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.getRect(artwork).width, greaterThan(restingWidth));
+        expect(openCalls, 0);
+        await press.up();
+        await tester.pumpAndSettle();
+        expect(tester.getRect(artwork).width, closeTo(restingWidth, 0.01));
+        expect(openCalls, 1);
+
+        final TestGesture cancelledPress = await tester.startGesture(
+          tester.getCenter(artwork),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.getRect(artwork).width, greaterThan(restingWidth));
+        await cancelledPress.cancel();
+        await tester.pumpAndSettle();
+        expect(tester.getRect(artwork).width, closeTo(restingWidth, 0.01));
+        expect(openCalls, 1);
+
+        await tester.tap(
+          find.descendant(
+            of: find.byType(MiniPlayerPlaybackButton),
+            matching: find.byType(IconButton),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(toggleCalls, 1);
+        expect(openCalls, 1);
+        expect(
+          tester
+              .widget<IconButton>(
+                find.byWidgetPredicate(
+                  (Widget widget) =>
+                      widget is IconButton && widget.tooltip == '播放队列',
+                ),
+              )
+              .onPressed,
+          isNull,
+        );
+        await tester.tap(find.byTooltip('播放队列'));
+        await tester.pumpAndSettle();
+        expect(openCalls, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'cover double tap switches page and mini information without artwork',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(tester, _metadata);
+
+      _expectInformation(tester, 'Song title', 'Song artist', opensUp: false);
+      expect(_metadata.albumArtUrl, isNull);
+      expect(
+        tester
+            .widget<PlayerMainPage>(find.byType(PlayerMainPage))
+            .display
+            .canToggleSource,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<PlayerArtworkFrame>(find.byType(PlayerArtworkFrame))
+            .coverUrl,
+        isEmpty,
+      );
+
+      await _doubleTapCover(tester);
+
+      expect(
+        container.read(playerDisplaySourceLogicProvider),
+        PlayerDisplaySource.bilibili,
+      );
+      _expectInformation(tester, _item.title, _item.author, opensUp: true);
+
+      await _doubleTapCover(tester);
+
+      expect(
+        container.read(playerDisplaySourceLogicProvider),
+        PlayerDisplaySource.metadata,
+      );
+      _expectInformation(tester, 'Song title', 'Song artist', opensUp: false);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'late metadata updates both players and next item resets the switch',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(tester, null);
+      final _FakeMetadataController metadataController =
+          container.read(metadataControllerProvider.notifier)
+              as _FakeMetadataController;
+      final _FakePlayerController playerController =
+          container.read(playerControllerProvider.notifier)
+              as _FakePlayerController;
+      final Completer<Metadata> result = Completer<Metadata>();
+      final Future<void> pendingMetadata = metadataController.receive(
+        result.future,
+      );
+
+      _expectInformation(tester, _item.title, _item.author, opensUp: true);
+      expect(
+        tester
+            .widget<PlayerMainPage>(find.byType(PlayerMainPage))
+            .display
+            .canToggleSource,
+        isFalse,
+      );
+
+      result.complete(_metadata);
+      await pendingMetadata;
+      await tester.pump();
+
+      _expectInformation(tester, 'Song title', 'Song artist', opensUp: false);
+      await _doubleTapCover(tester);
+      expect(
+        container.read(playerDisplaySourceLogicProvider),
+        PlayerDisplaySource.bilibili,
+      );
+      _expectInformation(tester, _item.title, _item.author, opensUp: true);
+
+      final PlayableItem nextItem = _item.copyWith(
+        bvid: 'BV2xx411c7mD',
+        title: 'Next video',
+        author: 'Next UP',
+        ownerMid: 456,
+      );
+      playerController.show(
+        container
+            .read(playerControllerProvider)
+            .copyWith(currentItem: nextItem, queue: <PlayableItem>[nextItem]),
+      );
+      await tester.pump();
+
+      expect(container.read(playerDisplaySourceLogicProvider), isNull);
+      _expectInformation(
+        tester,
+        nextItem.title,
+        nextItem.author,
+        opensUp: true,
+      );
+      expect(
+        tester
+            .widget<PlayerMainPage>(find.byType(PlayerMainPage))
+            .display
+            .canToggleSource,
+        isFalse,
+      );
+
+      metadataController.show(_metadata, stableId: nextItem.stableId);
+      await tester.pump();
+
+      _expectInformation(
+        tester,
+        nextItem.title,
+        nextItem.author,
+        opensUp: true,
+      );
+      expect(
+        tester
+            .widget<PlayerMainPage>(find.byType(PlayerMainPage))
+            .display
+            .canToggleSource,
+        isFalse,
+      );
+
+      metadataController.show(
+        Metadata(
+          stableId: nextItem.stableId,
+          title: 'Next song',
+          artist: 'Next artist',
+        ),
+      );
+      await tester.pump();
+
+      _expectInformation(tester, 'Next song', 'Next artist', opensUp: false);
+      playerController.show(
+        container
+            .read(playerControllerProvider)
+            .copyWith(statusHint: PlayerStatusHint.buffering),
+      );
+      await tester.pump();
+
+      final Finder miniPlayer = find.byType(MiniPlayerContent);
+      expect(
+        find.descendant(of: miniPlayer, matching: find.text('Next song')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: miniPlayer, matching: find.text('缓冲中...')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: miniPlayer, matching: find.text('Next artist')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'desktop bar keeps original two-row layout when display source changes',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata,
+        size: const Size(1280, 900),
+        home: const Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: DesktopPlayerBar(),
+          ),
+        ),
+      );
+
+      final Finder bar = find.byType(DesktopPlayerBar);
+      expect(tester.getSize(bar).height, 76);
+      expect(find.text('Song title'), findsOneWidget);
+      expect(find.text('Song artist'), findsNothing);
+      expect(tester.getSize(find.byTooltip('评论')), const Size(40, 40));
+      expect(
+        tester.getRect(find.text('Song title')).bottom,
+        lessThanOrEqualTo(tester.getRect(find.byTooltip('评论')).top),
+      );
+      expect(tester.takeException(), isNull);
+
+      container.read(playerDisplaySourceLogicProvider.notifier).toggle();
+      await tester.pump();
+
+      expect(find.text(_item.title), findsOneWidget);
+      expect(find.text(_item.author), findsNothing);
+      expect(find.text('Song artist'), findsNothing);
+      expect(tester.getSize(bar).height, 76);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final Size size in <Size>[const Size(320, 568), const Size(420, 900)]) {
+    testWidgets('portrait controls clear the bottom safe area at $size', (
+      WidgetTester tester,
+    ) async {
+      const EdgeInsets padding = EdgeInsets.only(top: 24, bottom: 34);
+      await _pumpPlayer(
+        tester,
+        _metadata,
+        size: size,
+        padding: padding,
+        home: const PlayerPage(initialItem: _item),
+      );
+      final Rect controls = tester.getRect(
+        find.byType(PlayerTransportControls),
+      );
+      expect(
+        controls.bottom,
+        lessThanOrEqualTo(size.height - padding.bottom - 32),
+      );
+      expect(
+        controls.top,
+        greaterThan(tester.getRect(find.byType(PlayerTrackHeader)).bottom),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final (Size portrait, double expectedSize) in <(Size, double)>[
+    (const Size(320, 568), 153.36),
+    (const Size(320, 640), 198.4),
+    (const Size(393, 852), 264.12),
+    (const Size(420, 900), 279),
+    (const Size(768, 1200), 320),
+  ]) {
+    testWidgets('rotation keeps artwork size at $portrait', (
+      WidgetTester tester,
+    ) async {
+      await _pumpPlayer(
+        tester,
+        _metadata,
+        size: portrait,
+        padding: const EdgeInsets.only(top: 24, bottom: 16),
+        home: const PlayerPage(initialItem: _item),
+      );
+      final Finder artwork = find.byType(PlayerArtworkFrame);
+      final Size portraitArtwork = tester.getSize(artwork);
+      expect(portraitArtwork.width, closeTo(expectedSize, 0.01));
+      expect(portraitArtwork.height, closeTo(expectedSize, 0.01));
+
+      tester.view.physicalSize = Size(portrait.height, portrait.width);
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerLandscapePage), findsOneWidget);
+      expect(tester.getSize(artwork), portraitArtwork);
+
+      tester.view.physicalSize = portrait;
+      await tester.pumpAndSettle();
+      expect(tester.getSize(artwork), portraitArtwork);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('landscape shrinks artwork when height is limited', (
+    WidgetTester tester,
+  ) async {
+    await _pumpPlayer(
+      tester,
+      _metadata,
+      size: const Size(900, 240),
+      home: const PlayerPage(initialItem: _item),
+    );
+    expect(
+      tester.getSize(find.byType(PlayerArtworkFrame)),
+      const Size(208, 208),
+    );
+    expect(tester.getTopLeft(find.byType(PlayerArtworkFrame)).dy, 8);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('landscape margins scale smoothly within the safe area', (
+    WidgetTester tester,
+  ) async {
+    for (final (Size size, EdgeInsets safePadding, double margin)
+        in <(Size, EdgeInsets, double)>[
+          (const Size(640, 320), const EdgeInsets.fromLTRB(44, 8, 20, 16), 24),
+          (const Size(699, 360), EdgeInsets.zero, 27.96),
+          (const Size(700, 360), EdgeInsets.zero, 28),
+          (
+            const Size(900, 420),
+            const EdgeInsets.fromLTRB(44, 8, 20, 16),
+            33.44,
+          ),
+          (const Size(1200, 600), const EdgeInsets.fromLTRB(44, 8, 20, 16), 40),
+        ]) {
+      await _pumpPlayer(
+        tester,
+        _metadata,
+        size: size,
+        padding: safePadding,
+        home: const PlayerPage(initialItem: _item),
+      );
+      final Rect artwork = tester.getRect(find.byType(PlayerArtworkFrame));
+      final Rect lyrics = tester.getRect(find.byType(PlayerLyricPage));
+      expect(artwork.left - safePadding.left, closeTo(margin, 0.01));
+      expect(
+        size.width - safePadding.right - lyrics.right,
+        closeTo(margin, 0.01),
+      );
+      expect(artwork.top, greaterThanOrEqualTo(safePadding.top + 8));
+      expect(
+        tester.getRect(find.byType(PlayerLandscapeControls)).bottom,
+        lessThanOrEqualTo(size.height - safePadding.bottom - 16),
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'landscape places artwork beside active lyrics above shared controls',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata.copyWith(
+          lyrics: '[00:00.000]First line\n[00:30.000]Next line',
+        ),
+        size: const Size(900, 420),
+        home: const PlayerPage(initialItem: _item),
+      );
+
+      expect(find.byType(PlayerLandscapePage), findsOneWidget);
+      expect(find.byType(PlayerArtworkFrame), findsOneWidget);
+      expect(find.byType(PlayerLyricPage), findsOneWidget);
+      expect(find.byType(PlayerProgressSection), findsOneWidget);
+      expect(find.byType(PlayerLandscapeControls), findsOneWidget);
+      expect(find.byType(PlayerTrackHeader), findsNothing);
+      expect(find.byType(PlayerTopBar), findsNothing);
+      expect(find.byType(PlayerDynamicBackdrop), findsOneWidget);
+      expect(
+        tester.getSize(find.byType(PlayerDynamicBackdrop)),
+        const Size(900, 420),
+      );
+      final _FakeCoverColorController coverColor =
+          container.read(playerCoverColorControllerProvider.notifier)
+              as _FakeCoverColorController;
+      for (final Color color in <Color>[Colors.blue, Colors.orange]) {
+        coverColor.show(color);
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<PlayerDynamicBackdrop>(find.byType(PlayerDynamicBackdrop))
+              .baseColor,
+          color,
+        );
+      }
+      expect(find.byType(PageView), findsNothing);
+      expect(find.text('Song title'), findsNothing);
+      expect(find.text('Song artist'), findsNothing);
+      final PlayerLyricPage lyrics = tester.widget<PlayerLyricPage>(
+        find.byType(PlayerLyricPage),
+      );
+      expect(lyrics.isActive, isTrue);
+      expect(lyrics.showToolbar, isFalse);
+      for (final String tooltip in <String>[
+        '手动匹配歌词',
+        '歌词偏移',
+        '歌词外观',
+        '隐藏译文',
+        '显示译文',
+      ]) {
+        expect(find.byTooltip(tooltip), findsNothing);
+      }
+      for (final String tooltip in <String>['上一首', '播放', '下一首', '列表循环']) {
+        expect(find.byTooltip(tooltip), findsOneWidget);
+      }
+      expect(
+        find.byWidgetPredicate(
+          (Widget widget) =>
+              widget is Tooltip &&
+              <String>['喜欢', '加入我喜欢'].contains(widget.message),
+        ),
+        findsOneWidget,
+      );
+
+      final Rect artwork = tester.getRect(find.byType(PlayerArtworkFrame));
+      final Rect lyricPanel = tester.getRect(find.byType(PlayerLyricPage));
+      final Rect progress = tester.getRect(find.byType(PlayerProgressSection));
+      final Rect controls = tester.getRect(
+        find.byType(PlayerLandscapeControls),
+      );
+      expect(artwork.right, lessThanOrEqualTo(lyricPanel.left));
+      expect(artwork.width, closeTo(artwork.height, 0.01));
+      expect(artwork.top, closeTo(lyricPanel.top, 0.01));
+      expect(artwork.bottom, closeTo(controls.bottom, 0.01));
+      expect(
+        tester
+            .widget<ClipRRect>(
+              find.descendant(
+                of: find.byType(PlayerArtworkFrame),
+                matching: find.byType(ClipRRect),
+              ),
+            )
+            .borderRadius,
+        BorderRadius.circular(8),
+      );
+      expect(artwork.width, closeTo(279, 0.01));
+      expect(artwork.top, greaterThanOrEqualTo(8));
+      expect(artwork.bottom, lessThanOrEqualTo(396));
+      final double centerY = tester
+          .getRect(find.byType(PlayerLandscapePage))
+          .center
+          .dy;
+      expect(artwork.center.dy, closeTo(centerY - 8, 0.01));
+      expect(
+        (lyricPanel.top + controls.bottom) / 2,
+        closeTo(centerY - 8, 0.01),
+      );
+      expect(find.byTooltip('返回'), findsNothing);
+      expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
+      expect(lyricPanel.bottom, lessThanOrEqualTo(progress.top));
+      expect(progress.bottom, lessThanOrEqualTo(controls.top));
+      expect(find.byTooltip('播放模式'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(PlayerLandscapeControls),
+          matching: find.byType(IconButton),
+        ),
+        findsNWidgets(5),
+      );
+      final double playX = tester.getCenter(find.byTooltip('播放')).dx;
+      expect(playX, closeTo(controls.center.dx, 0.01));
+      expect(
+        playX - tester.getCenter(find.byTooltip('上一首')).dx,
+        closeTo(tester.getCenter(find.byTooltip('下一首')).dx - playX, 0.01),
+      );
+      expect(
+        playX - tester.getCenter(find.byTooltip('喜欢')).dx,
+        closeTo(tester.getCenter(find.byTooltip('列表循环')).dx - playX, 0.01),
+      );
+      tester.view.physicalSize = const Size(420, 900);
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerMainPage), findsOneWidget);
+      expect(
+        tester
+            .widget<ClipRRect>(
+              find.descendant(
+                of: find.byType(PlayerArtworkFrame),
+                matching: find.byType(ClipRRect),
+              ),
+            )
+            .borderRadius,
+        BorderRadius.circular(8),
+      );
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).controller!.page,
+        1,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('landscape cover browses queue and only plays on confirmation', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata,
+      size: const Size(900, 420),
+      home: const PlayerPage(initialItem: _item),
+    );
+    final _FakePlayerController player =
+        container.read(playerControllerProvider.notifier)
+            as _FakePlayerController;
+    final PlayableItem next = _item.copyWith(bvid: 'next', title: 'Next song');
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(queue: <PlayableItem>[_item, next]),
+    );
+    await tester.pump();
+    final GestureDetector gesture = tester.widget<GestureDetector>(
+      find
+          .ancestor(
+            of: find.byType(PlayerArtworkFrame),
+            matching: find.byType(GestureDetector),
+          )
+          .first,
+    );
+    expect(gesture.onDoubleTap, isNull);
+    await tester.tap(find.byType(PlayerArtworkFrame));
+    await tester.pumpAndSettle();
+    expect(find.byType(PlayerCoverBrowserPage), findsOneWidget);
+    expect(find.text('Song title'), findsOneWidget);
+    expect(container.read(playerDisplaySourceLogicProvider), isNull);
+    final Finder carousel = find.byKey(
+      const ValueKey<String>('player-cover-carousel'),
+    );
+    await tester.drag(carousel, const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('Next song'), findsOneWidget);
+    expect(player.queueSelections, isEmpty);
+    expect(container.read(playerControllerProvider).currentItem, _item);
+    await tester.tap(
+      find.byKey(ValueKey<String>('queue-cover-${next.contentId}')),
+    );
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(
+            isReady: false,
+            statusHint: PlayerStatusHint.resolvingAudio,
+          ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(isReady: true, statusHint: null),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(PlayerCoverBrowserPage), findsNothing);
+    expect(player.queueSelections, <int>[1]);
+    expect(container.read(playerControllerProvider).currentItem, next);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'cover browser starts at current track and back cancels preview',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata,
+        size: const Size(640, 320),
+        textScaler: TextScaler.linear(2),
+        padding: const EdgeInsets.fromLTRB(44, 8, 20, 16),
+        home: const PlayerPage(initialItem: _item),
+      );
+      final _FakePlayerController player =
+          container.read(playerControllerProvider.notifier)
+              as _FakePlayerController;
+      final PlayableItem previous = _item.copyWith(bvid: 'previous');
+      player.show(
+        container
+            .read(playerControllerProvider)
+            .copyWith(
+              queue: <PlayableItem>[previous, _item],
+              currentQueueIndex: 1,
+            ),
+      );
+      await tester.pump();
+      await tester.tap(find.byType(PlayerArtworkFrame));
+      await tester.pumpAndSettle();
+      final CoverflowCarousel carousel = tester.widget<CoverflowCarousel>(
+        find.byKey(const ValueKey<String>('player-cover-carousel')),
+      );
+      expect(carousel.controller!.page, 1);
+      expect(find.text('Song title'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.drag(find.byType(PageView).last, const Offset(200, 0));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('返回播放器'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerCoverBrowserPage), findsNothing);
+      expect(player.queueSelections, isEmpty);
+      expect(container.read(playerControllerProvider).currentItem, _item);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final Size size in <Size>[
+    const Size(900, 420),
+    const Size(1440, 420),
+    const Size(640, 320),
+  ]) {
+    testWidgets('cover browser keeps balanced spacing at $size', (
+      WidgetTester tester,
+    ) async {
+      final List<PlayableItem> queue = List<PlayableItem>.generate(
+        9,
+        (int index) => _item.copyWith(bvid: 'cover-$index'),
+      );
+      await _pumpPlayer(
+        tester,
+        null,
+        size: size,
+        home: PlayerCoverBrowserPage(queue: queue, initialIndex: 4),
+      );
+      await tester.pumpAndSettle();
+
+      Rect artworkBounds(int index) {
+        final RenderBox artwork = tester.renderObject<RenderBox>(
+          find.descendant(
+            of: find.byKey(
+              ValueKey<String>('queue-cover-${queue[index].contentId}'),
+            ),
+            matching: find.byType(PlayerArtworkFrame),
+          ),
+        );
+        return MatrixUtils.transformRect(
+          artwork.getTransformTo(null),
+          Offset.zero & artwork.size,
+        );
+      }
+
+      void expectBalancedLayout(int center) {
+        final List<Rect> covers = <Rect>[
+          for (int index = center - 2; index <= center + 2; index++)
+            artworkBounds(index),
+        ];
+        expect(covers[2].center.dx, closeTo(size.width / 2, 0.01));
+        final List<double> gaps = <double>[
+          for (int index = 1; index < covers.length; index++)
+            covers[index].left - covers[index - 1].right,
+        ];
+        expect(gaps, everyElement(inInclusiveRange(8, 32)));
+        expect((gaps[0] - gaps[1]).abs(), lessThan(16));
+        expect(
+          covers.first.left,
+          closeTo(size.width - covers.last.right, 0.01),
+        );
+        expect(tester.takeException(), isNull);
+      }
+
+      expectBalancedLayout(4);
+      final Finder carousel = find.byKey(
+        const ValueKey<String>('player-cover-carousel'),
+      );
+      await tester.drag(carousel, Offset(-artworkBounds(4).width, 0));
+      await tester.pumpAndSettle();
+      expectBalancedLayout(5);
+      await tester.tapAt(artworkBounds(4).center);
+      await tester.pumpAndSettle();
+      expectBalancedLayout(4);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('player progress semantics survive readiness changes', (
+    WidgetTester tester,
+  ) async {
+    final ValueNotifier<bool> ready = ValueNotifier<bool>(true);
+    addTearDown(ready.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ValueListenableBuilder<bool>(
+            valueListenable: ready,
+            builder: (BuildContext context, bool isReady, Widget? child) {
+              return Transform.translate(
+                offset: Offset(isReady ? 0 : 10, 0),
+                child: PlayerProgressSection(
+                  position: const Duration(seconds: 42),
+                  duration: const Duration(minutes: 3),
+                  isReady: isReady,
+                  onChanged: (_) {},
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    for (final bool isReady in <bool>[false, true, false, true]) {
+      final State<StatefulWidget> previousSlider = tester.state(
+        find.byType(Slider),
+      );
+      ready.value = isReady;
+      await tester.pump();
+      expect(previousSlider.mounted, isFalse);
+      expect(tester.takeException(), isNull);
+      expect(
+        tester.widget<Slider>(find.byType(Slider)).onChanged,
+        isReady ? isNotNull : isNull,
+      );
+    }
+  });
+
+  testWidgets('confirming the current cover preserves playback position', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata,
+      size: const Size(900, 420),
+      home: const PlayerPage(initialItem: _item),
+    );
+    final _FakePlayerController player =
+        container.read(playerControllerProvider.notifier)
+            as _FakePlayerController;
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(position: const Duration(seconds: 42)),
+    );
+    await tester.pump();
+    await tester.tap(find.byType(PlayerArtworkFrame));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(ValueKey<String>('queue-cover-${_item.contentId}')),
+    );
+    await tester.pumpAndSettle();
+    expect(player.queueSelections, isEmpty);
+    expect(
+      container.read(playerControllerProvider).position,
+      const Duration(seconds: 42),
+    );
+    expect(find.byType(PlayerCoverBrowserPage), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cover confirmation resolves the live queue after reordering', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata,
+      size: const Size(900, 420),
+      home: const PlayerPage(initialItem: _item),
+    );
+    final _FakePlayerController player =
+        container.read(playerControllerProvider.notifier)
+            as _FakePlayerController;
+    final PlayableItem next = _item.copyWith(bvid: 'next', title: 'Next song');
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(queue: <PlayableItem>[_item, next]),
+    );
+    await tester.pump();
+    await tester.tap(find.byType(PlayerArtworkFrame));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(PageView), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(queue: <PlayableItem>[next, _item], currentQueueIndex: 1),
+    );
+    await tester.pump();
+    await tester.tap(
+      find.byKey(ValueKey<String>('queue-cover-${next.contentId}')),
+    );
+    await tester.pumpAndSettle();
+    expect(player.queueSelections, <int>[0]);
+    expect(container.read(playerControllerProvider).currentItem, next);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('landscape aligns lyrics progress labels and control edges', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata.copyWith(lyrics: '[00:00.000]First line\n[00:30.000]Next line'),
+      size: const Size(900, 420),
+      home: const PlayerPage(initialItem: _item),
+    );
+    final _FakeLyricSettingsLogic settings =
+        container.read(playerLyricSettingsLogicProvider.notifier)
+            as _FakeLyricSettingsLogic;
+    for (final double padding in <double>[0, 24, 36]) {
+      settings.show(PlayerLyricSettings(horizontalPadding: padding));
+      await tester.pump();
+      final Finder lyrics = find.byType(LyricView);
+      final Rect content = tester
+          .widget<LyricView>(lyrics)
+          .preset!
+          .padding
+          .resolve(TextDirection.ltr)
+          .deflateRect(tester.getRect(lyrics));
+      for (final Type type in <Type>[
+        PlayerProgressSection,
+        Slider,
+        PlayerLandscapeControls,
+      ]) {
+        final Rect rect = tester.getRect(find.byType(type));
+        expect(rect.left, closeTo(content.left, 0.01));
+        expect(rect.right, closeTo(content.right, 0.01));
+      }
+      final Finder labels = find.descendant(
+        of: find.byType(PlayerProgressSection),
+        matching: find.byType(Text),
+      );
+      expect(tester.getRect(labels.first).left, closeTo(content.left, 0.01));
+      expect(tester.getRect(labels.last).right, closeTo(content.right, 0.01));
+      expect(
+        tester.widget<Slider>(find.byType(Slider)).padding,
+        EdgeInsets.zero,
+      );
+      expect(
+        tester.getSize(find.byType(Slider)).height,
+        greaterThanOrEqualTo(48),
+      );
+      final Finder buttons = find.descendant(
+        of: find.byType(PlayerLandscapeControls),
+        matching: find.byType(IconButton),
+      );
+      final Widget firstIcon = tester.widget<IconButton>(buttons.first).icon;
+      final Widget lastIcon = tester.widget<IconButton>(buttons.last).icon;
+      expect(
+        tester.getRect(find.byWidget(firstIcon)).left,
+        closeTo(content.left, 0.01),
+      );
+      expect(
+        tester.getRect(find.byWidget(lastIcon)).right,
+        closeTo(content.right, 0.01),
+      );
+      for (final Element button in buttons.evaluate()) {
+        final Size size = tester.getSize(find.byWidget(button.widget));
+        expect(size.width, greaterThanOrEqualTo(48));
+        expect(size.height, greaterThanOrEqualTo(48));
+      }
+      expect(tester.takeException(), isNull);
+    }
+    tester.view.physicalSize = const Size(420, 900);
+    await tester.pumpAndSettle();
+    final Rect slider = tester.getRect(find.byType(Slider));
+    final Finder labels = find.descendant(
+      of: find.byType(PlayerProgressSection),
+      matching: find.byType(Text),
+    );
+    expect(tester.getRect(labels.first).left, closeTo(slider.left, 0.01));
+    expect(tester.getRect(labels.last).right, closeTo(slider.right, 0.01));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('landscape controls use the existing playback callbacks', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(
+      tester,
+      _metadata,
+      size: const Size(900, 420),
+      home: const PlayerPage(initialItem: _item),
+    );
+    final _FakePlayerController player =
+        container.read(playerControllerProvider.notifier)
+            as _FakePlayerController;
+    player.show(
+      container
+          .read(playerControllerProvider)
+          .copyWith(
+            queue: <PlayableItem>[
+              _item,
+              _item.copyWith(bvid: 'BV2xx411c7mD'),
+            ],
+          ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('播放'));
+    await tester.pump();
+    expect(player.togglePlaybackCalls, 1);
+    expect(find.byTooltip('暂停'), findsOneWidget);
+    await tester.tap(find.byTooltip('暂停'));
+    await tester.pump();
+    expect(player.togglePlaybackCalls, 2);
+    expect(container.read(playerControllerProvider).isPlaying, isFalse);
+
+    await tester.tap(find.byTooltip('上一首'));
+    await tester.tap(find.byTooltip('下一首'));
+    expect(player.previousCalls, 1);
+    expect(player.nextCalls, 1);
+
+    expect(find.byTooltip('播放队列'), findsNothing);
+    for (final (String, PlayerQueueMode) mode in [
+      ('列表循环', PlayerQueueMode.singleRepeat),
+      ('单曲循环', PlayerQueueMode.shuffle),
+      ('随机播放', PlayerQueueMode.sequence),
+    ]) {
+      final Finder modeButton = find.byTooltip(mode.$1);
+      final Finder buttons = find.descendant(
+        of: find.byType(PlayerLandscapeControls),
+        matching: find.byType(IconButton),
+      );
+      expect(tester.getRect(modeButton), tester.getRect(buttons.last));
+      await tester.tap(modeButton);
+      await tester.pump();
+      expect(container.read(playerControllerProvider).queueMode, mode.$2);
+    }
+
+    final Rect track = tester.getRect(find.byType(Slider));
+    await tester.tapAt(Offset(track.left + track.width / 4, track.center.dy));
+    await tester.pump();
+    expect(player.progressSeeks, hasLength(1));
+    expect(player.progressSeeks.single.inSeconds, closeTo(45, 1));
+    expect(container.read(playerControllerProvider).isPlaying, isTrue);
+    tester
+        .widget<PlayerLyricPage>(find.byType(PlayerLyricPage))
+        .onSeek(const Duration(seconds: 12));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(player.lyricSeeks, <Duration>[const Duration(seconds: 12)]);
+    expect(player.progressSeeks, hasLength(1));
+    expect(
+      tester.widget<Slider>(find.byType(Slider)).value,
+      closeTo(12 / 180, 0.001),
+    );
+
+    await tester.tapAt(tester.getCenter(find.byType(Slider)));
+    await tester.pump();
+    tester
+        .widget<PlayerLyricPage>(find.byType(PlayerLyricPage))
+        .onSeek(const Duration(seconds: 12));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(
+      tester.widget<Slider>(find.byType(Slider)).value,
+      closeTo(12 / 180, 0.001),
+    );
+
+    player.show(const PlayerState());
+    await tester.pump();
+    expect(
+      tester
+          .widget<IconButton>(
+            find
+                .descendant(
+                  of: find.byType(PlayerLandscapeControls),
+                  matching: find.byType(IconButton),
+                )
+                .last,
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'rotation preserves playback and the selected portrait lyric tab',
+    (WidgetTester tester) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata,
+        home: const PlayerPage(initialItem: _item),
+      );
+      final _FakePlayerController player =
+          container.read(playerControllerProvider.notifier)
+              as _FakePlayerController;
+      final PlayerState playing = container
+          .read(playerControllerProvider)
+          .copyWith(
+            queue: <PlayableItem>[
+              _item,
+              _item.copyWith(bvid: 'BV2xx411c7mD'),
+            ],
+            queueMode: PlayerQueueMode.shuffle,
+            queueSourceLabel: 'Saved queue',
+            position: const Duration(seconds: 42),
+            isPlaying: true,
+          );
+      player.show(playing);
+      await tester.pump();
+      expect(find.byType(PlayerMainPage), findsOneWidget);
+      expect(find.byType(PlayerTrackHeader), findsOneWidget);
+      expect(find.byType(PlayerTopBar), findsOneWidget);
+      expect(find.byType(PlayerDynamicBackdrop), findsOneWidget);
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).key,
+        const PageStorageKey<String>('playerPages'),
+      );
+
+      await tester.drag(find.byType(PageView), const Offset(-380, 0));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).controller!.page,
+        2,
+      );
+      expect(find.byTooltip('手动匹配歌词'), findsOneWidget);
+      final State portraitPage = tester.state(find.byType(PlayerPage));
+
+      tester.view.physicalSize = const Size(900, 420);
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(PlayerPage)), same(portraitPage));
+      expect(find.byType(PlayerLandscapePage), findsOneWidget);
+      expect(find.byType(PageView), findsNothing);
+      expect(find.byTooltip('手动匹配歌词'), findsNothing);
+      expect(container.read(playerControllerProvider), playing);
+      expect(
+        tester
+            .widget<PlayerProgressSection>(find.byType(PlayerProgressSection))
+            .position,
+        playing.position,
+      );
+
+      tester.view.physicalSize = const Size(420, 900);
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(PlayerPage)), same(portraitPage));
+      expect(find.byType(PlayerLandscapePage), findsNothing);
+      expect(
+        tester.widget<PageView>(find.byType(PageView)).controller!.page,
+        2,
+      );
+      expect(
+        tester.widget<PlayerTopBar>(find.byType(PlayerTopBar)).currentPage,
+        2,
+      );
+      final PlayerLyricPage lyrics = tester.widget<PlayerLyricPage>(
+        find.byType(PlayerLyricPage),
+      );
+      expect(lyrics.isActive, isTrue);
+      expect(lyrics.showToolbar, isTrue);
+      expect(find.byTooltip('手动匹配歌词'), findsOneWidget);
+      expect(container.read(playerControllerProvider), playing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('compact dark landscape respects safe insets and large text', (
+    WidgetTester tester,
+  ) async {
+    const Size size = Size(640, 320);
+    const EdgeInsets padding = EdgeInsets.fromLTRB(44, 8, 20, 16);
+    await _pumpPlayer(
+      tester,
+      _metadata.copyWith(lyrics: '[00:00.000]First line\n[00:30.000]Next line'),
+      size: size,
+      padding: padding,
+      textScaler: TextScaler.linear(2),
+      theme: ThemeData.dark(),
+      home: const PlayerPage(initialItem: _item),
+    );
+
+    expect(find.byType(PlayerLandscapePage), findsOneWidget);
+    final BuildContext context = tester.element(
+      find.byType(PlayerLandscapePage),
+    );
+    expect(Theme.of(context).brightness, Brightness.dark);
+    expect(MediaQuery.textScalerOf(context).scale(10), 20);
+    final Rect artwork = tester.getRect(find.byType(PlayerArtworkFrame));
+    expect(
+      artwork.top,
+      closeTo(tester.getRect(find.byType(PlayerLyricPage)).top, 0.01),
+    );
+    expect(
+      tester.getRect(find.byType(PlayerLandscapeControls)).bottom,
+      closeTo(artwork.bottom, 0.01),
+    );
+    final Rect safeRect = Rect.fromLTRB(
+      padding.left,
+      padding.top,
+      size.width - padding.right,
+      size.height - padding.bottom,
+    );
+    for (final Type type in <Type>[
+      PlayerArtworkFrame,
+      PlayerLyricPage,
+      PlayerProgressSection,
+      PlayerLandscapeControls,
+    ]) {
+      final Rect rect = tester.getRect(find.byType(type));
+      expect(rect.width, greaterThan(0));
+      expect(rect.height, greaterThan(0));
+      expect(rect.left, greaterThanOrEqualTo(safeRect.left));
+      expect(rect.top, greaterThanOrEqualTo(safeRect.top));
+      expect(rect.right, lessThanOrEqualTo(safeRect.right));
+      expect(rect.bottom, lessThanOrEqualTo(safeRect.bottom));
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final String status in <String>[
+    'loading',
+    'missing',
+    'error',
+    'empty',
+  ]) {
+    testWidgets('compact landscape fits $status lyrics with large text', (
+      WidgetTester tester,
+    ) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        status == 'loading' ? null : _metadata,
+        size: const Size(640, 320),
+        padding: const EdgeInsets.fromLTRB(44, 8, 20, 16),
+        textScaler: TextScaler.linear(2),
+        home: const PlayerPage(),
+      );
+      if (status == 'error') {
+        (container.read(metadataControllerProvider.notifier)
+                as _FakeMetadataController)
+            .fail('歌词查询失败，请重试');
+      } else if (status == 'empty') {
+        (container.read(playerControllerProvider.notifier)
+                as _FakePlayerController)
+            .show(const PlayerState());
+      }
+      await tester.pump();
+      expect(find.byType(PlayerLandscapePage), findsOneWidget);
+      expect(find.byType(PlayerLandscapeControls), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final Size size in <Size>[const Size(420, 900), const Size(320, 568)]) {
+    testWidgets('player menu shows playback speed on the right at $size', (
+      WidgetTester tester,
+    ) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata,
+        size: size,
+        home: const PlayerPage(),
+      );
+      (container.read(playerControllerProvider.notifier)
+              as _FakePlayerController)
+          .show(container.read(playerControllerProvider).copyWith(speed: 1.5));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('playerMenuButton')));
+      await tester.pumpAndSettle();
+      final Finder entry = find.byKey(const Key('playbackSpeedMenuEntry'));
+      await tester.ensureVisible(entry);
+      await tester.pumpAndSettle();
+      final ListTile tile = tester.widget<ListTile>(entry);
+      expect(tile.subtitle, isNull);
+      expect((tile.trailing! as Text).data, '1.5x');
+      final Rect title = tester.getRect(find.text('倍速播放'));
+      final Rect value = tester.getRect(find.text('1.5x'));
+      expect(value.left, greaterThan(title.right));
+      expect(value.center.dy, closeTo(title.center.dy, 1));
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      expect(find.text('倍速播放'), findsNothing);
+      expect(find.text('1.5x'), findsOneWidget);
+      expect(find.byIcon(Icons.check_rounded), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('player menu adjusts app volume inline at $size', (
+      WidgetTester tester,
+    ) async {
+      final ProviderContainer container = await _pumpPlayer(
+        tester,
+        _metadata,
+        size: size,
+        home: const PlayerPage(),
+      );
+      final _FakePlayerController controller =
+          container.read(playerControllerProvider.notifier)
+              as _FakePlayerController;
+      controller.show(
+        container.read(playerControllerProvider).copyWith(volume: 0.25),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('playerMenuButton')));
+      await tester.pumpAndSettle();
+      final Finder slider = find.byKey(const Key('playerVolumeSlider'));
+      await tester.ensureVisible(slider);
+      await tester.pumpAndSettle();
+      expect(find.text('应用内音量'), findsOneWidget);
+      expect(find.text('25%'), findsOneWidget);
+      expect(tester.widget<Slider>(slider).value, 0.25);
+      expect(tester.widget<Slider>(slider).divisions, isNull);
+      final Rect labelRect = tester.getRect(find.text('应用内音量'));
+      final Rect sliderRect = tester.getRect(slider);
+      final Rect percentRect = tester.getRect(find.text('25%'));
+      expect(labelRect.center.dy, closeTo(sliderRect.center.dy, 1));
+      expect(percentRect.center.dy, closeTo(sliderRect.center.dy, 1));
+      expect(sliderRect.left, greaterThan(labelRect.right));
+      expect(sliderRect.right, lessThanOrEqualTo(percentRect.left));
+      final SliderThemeData sliderTheme = SliderTheme.of(
+        tester.element(slider),
+      );
+      expect(sliderTheme.trackHeight, 3);
+      expect(sliderTheme.thumbShape, isA<RoundSliderThumbShape>());
+      final TestGesture gesture = await tester.startGesture(
+        tester.getCenter(slider),
+      );
+      await gesture.moveBy(const Offset(20, 0));
+      await tester.pump();
+      expect(controller.volumeChanges, isNotEmpty);
+      final double volume = container.read(playerControllerProvider).volume;
+      expect(volume, greaterThan(0.25));
+      expect(tester.widget<Slider>(slider).value, volume);
+      expect(find.text('${(volume * 100).round()}%'), findsOneWidget);
+      expect(find.byType(BottomSheet), findsOneWidget);
+      await gesture.up();
+      await controller.setVolume(0.005);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 0.005);
+      tester.widget<Slider>(slider).onChanged!(0);
+      await tester.pumpAndSettle();
+      expect(find.text('0%'), findsOneWidget);
+      expect(find.byIcon(Icons.volume_off_rounded), findsOneWidget);
+      tester.widget<Slider>(slider).onChanged!(1);
+      await tester.pumpAndSettle();
+      expect(find.text('100%'), findsOneWidget);
+      Navigator.of(tester.element(slider)).pop();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('playerMenuButton')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(slider);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 1);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('timeline highlights the chapter for the live position', (
+    WidgetTester tester,
+  ) async {
+    final ProviderContainer container = await _pumpPlayer(tester, null);
+    (container.read(playerControllerProvider.notifier) as _FakePlayerController)
+        .show(
+          const PlayerState(
+            currentItem: _item,
+            queue: <PlayableItem>[_item],
+            currentQueueIndex: 0,
+            isReady: true,
+            duration: Duration(minutes: 5),
+            position: Duration(minutes: 2, seconds: 30),
+            chapters: <PlaybackChapter>[
+              PlaybackChapter(start: Duration.zero, title: '夜曲'),
+              PlaybackChapter(start: Duration(minutes: 2), title: '晴天'),
+              PlaybackChapter(start: Duration(minutes: 4), title: '稻香'),
+            ],
+          ),
+        );
+    await tester.pump();
+
+    await tester.tap(find.byType(BadgedIconButton).first);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('时间轴'), findsOneWidget);
+    final Finder sheetChapters = find.descendant(
+      of: find.byType(BottomSheet),
+      matching: find.text('晴天'),
+    );
+    final BuildContext timelineContext = tester.element(sheetChapters);
+    final ColorScheme colorScheme = Theme.of(timelineContext).colorScheme;
+    expect(
+      tester.widget<Text>(sheetChapters).style?.color,
+      colorScheme.primary,
+    );
+    expect(
+      tester
+          .widget<Text>(
+            find.descendant(
+              of: find.byType(BottomSheet),
+              matching: find.text('夜曲'),
+            ),
+          )
+          .style
+          ?.color,
+      colorScheme.onSurface,
+    );
+  });
+}
+
+Future<ProviderContainer> _pumpPlayer(
+  WidgetTester tester,
+  Metadata? metadata, {
+  Size size = const Size(420, 900),
+  Widget? home,
+  EdgeInsets padding = EdgeInsets.zero,
+  TextScaler textScaler = TextScaler.noScaling,
+  ThemeData? theme,
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        favoritesControllerProvider.overrideWith(_FakeFavoritesController.new),
+        playerControllerProvider.overrideWith(_FakePlayerController.new),
+        metadataControllerProvider.overrideWith(
+          () => _FakeMetadataController(metadata),
+        ),
+        playerCoverColorControllerProvider.overrideWith(
+          _FakeCoverColorController.new,
+        ),
+        playerLyricSettingsLogicProvider.overrideWith(
+          _FakeLyricSettingsLogic.new,
+        ),
+        playerOnlineAudienceControllerProvider.overrideWith(
+          _FakeOnlineAudienceController.new,
+        ),
+        playerDisplaySettingsLogicProvider.overrideWithValue(true),
+        desktopLyricsControllerProvider.overrideWithValue(false),
+      ],
+      child: MaterialApp(
+        theme: theme,
+        builder: (BuildContext context, Widget? child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            padding: padding,
+            viewPadding: padding,
+            textScaler: textScaler,
+          ),
+          child: child!,
+        ),
+        home:
+            home ??
+            Scaffold(
+              body: Column(
+                children: <Widget>[
+                  const Expanded(child: PlayerPage(initialItem: _item)),
+                  HeroMode(
+                    enabled: false,
+                    child: Consumer(
+                      builder:
+                          (BuildContext context, WidgetRef ref, Widget? child) {
+                            return MiniPlayerContent(
+                              state: ref.watch(playerControllerProvider),
+                              onTogglePlayback: () {},
+                            );
+                          },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+      ),
+    ),
+  );
+  await tester.pump();
+  return ProviderScope.containerOf(
+    tester.element(find.byType(MaterialApp)),
+    listen: false,
+  );
+}
+
+Future<void> _doubleTapCover(WidgetTester tester) async {
+  final Finder cover = find.byType(PlayerArtworkFrame);
+  await tester.tap(cover);
+  await tester.pump(const Duration(milliseconds: 100));
+  await tester.tap(cover);
+  await tester.pump(const Duration(milliseconds: 300));
+}
+
+void _expectInformation(
+  WidgetTester tester,
+  String title,
+  String artist, {
+  required bool opensUp,
+}) {
+  final PlayerTrackHeader header = tester.widget<PlayerTrackHeader>(
+    find.byType(PlayerTrackHeader),
+  );
+  expect(header.title, title);
+  expect(header.subtitle, artist);
+  expect(header.onSubtitleTap, opensUp ? isNotNull : isNull);
+  final Finder headerWidget = find.byType(PlayerTrackHeader);
+  expect(
+    find.descendant(of: headerWidget, matching: find.text(title)),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(of: headerWidget, matching: find.text(artist)),
+    findsOneWidget,
+  );
+  final Finder miniPlayer = find.byType(MiniPlayerContent);
+  expect(
+    find.descendant(of: miniPlayer, matching: find.text(title)),
+    findsOneWidget,
+  );
+  expect(
+    find.descendant(of: miniPlayer, matching: find.text(artist)),
+    findsOneWidget,
+  );
+}
+
+class _FakeFavoritesController extends FavoritesController {
+  @override
+  FavoritesState build() => const FavoritesState();
+}
+
+class _FakePlayerController extends PlayerController {
+  int togglePlaybackCalls = 0;
+  int previousCalls = 0;
+  int nextCalls = 0;
+  final List<int> queueSelections = <int>[];
+  final List<Duration> progressSeeks = <Duration>[];
+  final List<Duration> lyricSeeks = <Duration>[];
+  final List<double> volumeChanges = <double>[];
+
+  @override
+  PlayerState build() => const PlayerState(
+    currentItem: _item,
+    queue: <PlayableItem>[_item],
+    currentQueueIndex: 0,
+    isReady: true,
+    duration: Duration(minutes: 3),
+  );
+
+  void show(PlayerState value) => state = value;
+
+  @override
+  Future<void> setVolume(double volume) async {
+    volumeChanges.add(volume);
+    state = state.copyWith(volume: volume);
+  }
+
+  @override
+  Future<void> togglePlayback() async {
+    togglePlaybackCalls++;
+    state = state.copyWith(isPlaying: !state.isPlaying);
+  }
+
+  @override
+  Future<void> skipToQueueIndex(int index, {bool autoplay = true}) async {
+    queueSelections.add(index);
+    state = state.copyWith(
+      currentItem: state.queue[index],
+      currentQueueIndex: index,
+      position: Duration.zero,
+      isPlaying: autoplay,
+    );
+  }
+
+  @override
+  Future<void> skipToPrevious() async => previousCalls++;
+
+  @override
+  Future<void> skipToNext() async => nextCalls++;
+
+  @override
+  void toggleQueueMode() {
+    state = state.copyWith(
+      queueMode: PlayerQueueMode
+          .values[(state.queueMode.index + 1) % PlayerQueueMode.values.length],
+    );
+  }
+
+  @override
+  Future<void> seek(Duration position) async {
+    lyricSeeks.add(position);
+    state = state.copyWith(position: position);
+  }
+
+  @override
+  Future<void> seekFromProgressBar(Duration position) async {
+    progressSeeks.add(position);
+    state = state.copyWith(position: position, isPlaying: true);
+  }
+}
+
+class _FakeMetadataController extends MetadataController {
+  _FakeMetadataController(this.metadata);
+
+  final Metadata? metadata;
+
+  @override
+  MetadataState build() => MetadataState(
+    stableId: _item.stableId,
+    metadata: metadata,
+    isLoading: metadata == null,
+    hasSearched: metadata != null,
+  );
+
+  Future<void> receive(Future<Metadata> result) async => show(await result);
+
+  void fail(String message) {
+    state = MetadataState(stableId: _item.stableId, errorMessage: message);
+  }
+
+  void show(Metadata value, {String? stableId}) {
+    state = MetadataState(
+      stableId: stableId ?? value.stableId,
+      metadata: value,
+      hasSearched: true,
+    );
+  }
+}
+
+class _FakeCoverColorController extends PlayerCoverColorController {
+  @override
+  Color? build() => null;
+
+  void show(Color color) => state = color;
+}
+
+class _FakeLyricSettingsLogic extends PlayerLyricSettingsLogic {
+  @override
+  PlayerLyricSettings build() => const PlayerLyricSettings();
+
+  void show(PlayerLyricSettings value) => state = value;
+}
+
+class _FakeOnlineAudienceController extends PlayerOnlineAudienceController {
+  @override
+  PlayerOnlineAudience? build() => null;
+}

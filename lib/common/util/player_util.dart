@@ -1,0 +1,101 @@
+import 'package:bilimusic/core/layout/app_layout.dart';
+import 'package:bilimusic/feature/player/data/bili_player_repository.dart';
+import 'package:bilimusic/feature/player/domain/playable_item.dart';
+import 'package:bilimusic/feature/player/logic/player_controller.dart';
+import 'package:bilimusic/router/util/player_navigation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_lyric/flutter_lyric.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class PlayerUtil {
+  static final RegExp _lrcPattern = RegExp(
+    r'\[(\d{1,2}:\d{1,2}(?:\.\d{1,3})?)\]',
+  );
+  static final RegExp _qrcPattern = RegExp(r'\[(\d+),(\d+)\]');
+
+  // 播放队列并打开播放器
+  static Future<void> playQueueAndOpenPlayer(
+    BuildContext context,
+    WidgetRef ref, {
+    required List<PlayableItem> items,
+    int startIndex = 0,
+    String? sourceLabel,
+  }) async {
+    final Future<void> setQueueFuture = ref
+        .read(playerControllerProvider.notifier)
+        .setQueue(items, startIndex: startIndex, sourceLabel: sourceLabel);
+
+    if (context.mounted &&
+        !AppLayout.isDesktopPlatform &&
+        AppLayoutScope.of(context) == AppLayout.mobile) {
+      await openPlayerPage(context);
+    }
+
+    await setQueueFuture;
+  }
+
+  // 播放单曲并打开播放器
+  static Future<void> playItemAndOpenPlayer(
+    BuildContext context,
+    WidgetRef ref, {
+    required PlayableItem item,
+    String? sourceLabel,
+  }) {
+    return playQueueAndOpenPlayer(
+      context,
+      ref,
+      items: <PlayableItem>[item],
+      startIndex: 0,
+      sourceLabel: sourceLabel,
+    );
+  }
+
+  static Future<int> enqueueAllParts(WidgetRef ref, PlayableItem item) async {
+    final List<PlayableItem> parts = await ref
+        .read(biliPlayerRepositoryProvider)
+        .resolveAllParts(item);
+    final Set<String> queuedIds = ref
+        .read(playerControllerProvider)
+        .queue
+        .map((PlayableItem item) => item.stableId)
+        .toSet();
+    final int addedCount = parts
+        .where((PlayableItem item) => !queuedIds.contains(item.stableId))
+        .length;
+    await ref.read(playerControllerProvider.notifier).enqueue(parts);
+    return addedCount;
+  }
+
+  static String? buildRenderableLyrics(String? rawLyrics, Duration? duration) {
+    final String trimmed = rawLyrics?.trim() ?? '';
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    if (_looksLikeQrc(trimmed)) {
+      return trimmed;
+    }
+
+    if (!_looksLikeLrc(trimmed)) {
+      return trimmed;
+    }
+
+    if (duration == null || duration <= Duration.zero) {
+      return trimmed;
+    }
+
+    try {
+      return LrcToQrcUtil.convert(trimmed, totalDuration: duration);
+    } on Object {
+      return trimmed;
+    }
+  }
+
+  static bool _looksLikeLrc(String lyrics) {
+    return _lrcPattern.hasMatch(lyrics);
+  }
+
+  static bool _looksLikeQrc(String lyrics) {
+    return _qrcPattern.hasMatch(lyrics);
+  }
+}
