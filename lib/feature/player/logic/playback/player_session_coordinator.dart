@@ -307,7 +307,8 @@ class PlayerSessionCoordinator {
       _queueManager.recordVisit(
         queue: _state.queue,
         mode: _state.queueMode,
-        index: queueIndex,
+        // 分P队列可能已在 enqueueAvailableParts 中重建，索引以最新状态为准。
+        index: _state.currentQueueIndex ?? queueIndex,
       );
       if (autoplay) {
         _host.recordRecentPlayback(activeEntry.item);
@@ -629,6 +630,9 @@ class PlayerSessionCoordinator {
       ),
     );
     _host.publishPlaybackState();
-    unawaited(_host.persistQueueSnapshot());
+    // 缓存命中的分P在解析时没有 availableParts，异步补全后同样要把
+    // 该资源的全部分P按原顺序补进播放队列。
+    await _host.enqueueAvailableParts(completed.availableParts);
+    await _host.persistQueueSnapshot();
   }
 }

@@ -532,8 +532,71 @@ class PlayerController extends Notifier<PlayerState>
   }
 
   @override
-  Future<void> enqueueAvailableParts(List<PlayableItem> parts) =>
-      enqueue(parts);
+  Future<void> enqueueAvailableParts(List<PlayableItem> parts) async {
+    if (parts.length < 2) {
+      return;
+    }
+    final int? currentIndex = state.currentQueueIndex;
+    final PlayableItem? currentItem = state.currentItem;
+    if (currentIndex == null || currentItem == null) {
+      await enqueue(parts);
+      return;
+    }
+
+    // 多P资源起播时，把「只含所选分P」的队列重建成该资源的完整有序分P列表，
+    // 并让播放位置对准用户选中的那一集，这样下一集能自动接着播。
+    final int partIndex = _indexInParts(parts, currentItem);
+    if (partIndex < 0) {
+      await enqueue(parts);
+      return;
+    }
+    final Set<String> partIds = parts
+        .map((PlayableItem part) => part.stableId)
+        .toSet();
+    final bool queueBelongsToOneVideo = state.queue.every(
+      (PlayableItem item) => partIds.contains(item.stableId),
+    );
+    if (!queueBelongsToOneVideo) {
+      // 队列里还有其他来源的内容，保留用户已有的顺序，只补齐缺失的分P。
+      await enqueue(parts);
+      return;
+    }
+
+    final List<PlayableItem> queue = List<PlayableItem>.unmodifiable(parts);
+    _queueManager.resetForQueue(currentIndex: partIndex);
+    state = state.copyWith(
+      queue: queue,
+      currentQueueIndex: partIndex,
+      currentItem: queue[partIndex],
+    );
+    _publishPlaybackState();
+    await _persistQueueSnapshot();
+  }
+
+  int _indexInParts(List<PlayableItem> parts, PlayableItem current) {
+    final int? cid = current.cid;
+    if (cid != null && cid > 0) {
+      for (int i = 0; i < parts.length; i++) {
+        if (parts[i].cid == cid) {
+          return i;
+        }
+      }
+    }
+    final int? page = current.page;
+    if (page != null && page > 0) {
+      for (int i = 0; i < parts.length; i++) {
+        if (parts[i].page == page) {
+          return i;
+        }
+      }
+    }
+    for (int i = 0; i < parts.length; i++) {
+      if (parts[i].stableId == current.stableId) {
+        return i;
+      }
+    }
+    return -1;
+  }
 
   Future<void> enqueue(List<PlayableItem> items) async {
     if (items.isEmpty) {
