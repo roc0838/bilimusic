@@ -73,6 +73,12 @@ abstract interface class PlayerSessionHost {
     bool trackProgress = false,
   });
 
+  void beginListeningHistory(
+    PlayableItem item,
+    Duration position,
+    Duration? duration,
+  );
+
   void recordRecentPlayback(PlayableItem item);
 
   void showToast(String message);
@@ -117,6 +123,7 @@ class PlayerSessionCoordinator {
     required bool autoplay,
     required Duration initialPosition,
     int? generation,
+    bool preferLocalStart = false,
     bool persistAfterLoad = true,
     int retryCount = 0,
     Set<String> skippedUnavailableStableIds = const <String>{},
@@ -188,7 +195,10 @@ class PlayerSessionCoordinator {
 
       Duration startPosition = initialPosition;
       ResolvedQueueEntry activeEntry = entry;
-      if (entry.item.isSpoken) {
+      // 本地收听记录优先：命中记录时不再让 B 站历史 / 旧的多P恢复逻辑覆盖起点。
+      final bool useLocalStart =
+          preferLocalStart || initialPosition > Duration.zero;
+      if (!useLocalStart && entry.item.isSpoken) {
         startPosition = await _host.resumeListeningPosition(
           entry.item,
           fallback: initialPosition,
@@ -202,7 +212,7 @@ class PlayerSessionCoordinator {
             (duration != null && startPosition >= duration)) {
           startPosition = Duration.zero;
         }
-      } else if (entry.availableParts.length > 1) {
+      } else if (!useLocalStart && entry.availableParts.length > 1) {
         final ({PlayableItem item, Duration position})? resumePart =
             targetItem.page == null
             ? _host.localResumePart(entry.availableParts)
@@ -274,6 +284,11 @@ class PlayerSessionCoordinator {
       _setState(_state.copyWith(position: startPosition));
       await _host.enqueueAvailableParts(activeEntry.availableParts);
       _host.scheduleChapterResolution();
+      _host.beginListeningHistory(
+        activeEntry.item,
+        startPosition,
+        _state.duration,
+      );
       _host.beginListening(
         activeEntry.item,
         startPosition,

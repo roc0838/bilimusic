@@ -20,10 +20,16 @@ class PlayerUtil {
     required List<PlayableItem> items,
     int startIndex = 0,
     String? sourceLabel,
+    Duration? initialPosition,
   }) async {
     final Future<void> setQueueFuture = ref
         .read(playerControllerProvider.notifier)
-        .setQueue(items, startIndex: startIndex, sourceLabel: sourceLabel);
+        .setQueue(
+          items,
+          startIndex: startIndex,
+          sourceLabel: sourceLabel,
+          initialPosition: initialPosition,
+        );
 
     if (context.mounted &&
         !AppLayout.isDesktopPlatform &&
@@ -40,6 +46,7 @@ class PlayerUtil {
     WidgetRef ref, {
     required PlayableItem item,
     String? sourceLabel,
+    Duration? initialPosition,
   }) {
     return playQueueAndOpenPlayer(
       context,
@@ -47,6 +54,7 @@ class PlayerUtil {
       items: <PlayableItem>[item],
       startIndex: 0,
       sourceLabel: sourceLabel,
+      initialPosition: initialPosition,
     );
   }
 

@@ -10,6 +10,7 @@ import 'package:bilimusic/core/window/windows_taskbar_thumbnail_toolbar.dart';
 import 'package:bilimusic/feature/download/data/download_repository.dart';
 import 'package:bilimusic/feature/download/logic/downloaded_audio_source_resolver.dart';
 import 'package:bilimusic/feature/listening/logic/listening_progress_controller.dart';
+import 'package:bilimusic/feature/listening_history/logic/listening_history_tracker.dart';
 import 'package:bilimusic/feature/player/data/audio_cache_repository.dart';
 import 'package:bilimusic/feature/player/data/bili_chapter_repository.dart';
 import 'package:bilimusic/feature/player/data/bili_player_repository.dart';
@@ -107,9 +108,11 @@ class PlayerController extends Notifier<PlayerState>
       const _EnginePlaybackSnapshot();
 
   ListeningProgressController? _listening;
+  late final ListeningHistoryTracker _history = ListeningHistoryTracker();
 
   void _suspendListening() {
     unawaited(_listening?.suspend());
+    unawaited(_history.flush());
   }
 
   bool _isBound = false;
@@ -175,6 +178,7 @@ class PlayerController extends Notifier<PlayerState>
     _nextGeneration();
     await _listening?.suspend();
     await _listening?.flush();
+    await _history.flush();
     try {
       await _persistQueueSnapshot();
       await _audioEngine.stop();
@@ -219,6 +223,7 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   Future<void> pause() async {
+    unawaited(_history.flush());
     _nextGeneration();
     _session.cancelPendingRetry();
     await _audioEngine.pause();
@@ -329,6 +334,7 @@ class PlayerController extends Notifier<PlayerState>
     final Duration target = position < Duration.zero ? Duration.zero : position;
     _pendingSeekTarget = target;
     state = state.copyWith(position: target);
+    _history.onSeek(target);
     try {
       await _audioEngine.seek(target);
     } finally {
@@ -417,6 +423,7 @@ class PlayerController extends Notifier<PlayerState>
     int startIndex = 0,
     String? sourceLabel,
     bool autoplay = true,
+    Duration? initialPosition,
   }) async {
     if (items.isEmpty) {
       return;
@@ -424,7 +431,15 @@ class PlayerController extends Notifier<PlayerState>
 
     final int generation = _nextGeneration();
     _suspendListening();
+    await _history.flush();
     final PlayableItem startItem = items[startIndex.clamp(0, items.length - 1)];
+    // 任何入口点开同一音频都优先使用本地收听记录里的位置。
+    final Duration? savedPosition = _history.resumePositionFor(
+      startItem.stableId,
+    );
+    final Duration resolvedPosition =
+        initialPosition ?? savedPosition ?? Duration.zero;
+    final bool preferLocalStart = savedPosition != null;
     final List<PlayableItem> uniqueItems = _dedupeQueueItems(items);
     final int resolvedIndex = uniqueItems.indexWhere(
       (PlayableItem item) => item.stableId == startItem.stableId,
@@ -455,12 +470,14 @@ class PlayerController extends Notifier<PlayerState>
       statusHint: null,
       errorMessage: null,
     );
+    _history.begin(queue[resolvedIndex], resolvedPosition, null);
     _emitPlayerEvent(PlayerEventType.trackChanged);
     _publishPlaybackState();
     await _session.load(
       resolvedIndex,
       autoplay: autoplay,
-      initialPosition: Duration.zero,
+      initialPosition: resolvedPosition,
+      preferLocalStart: preferLocalStart,
       generation: generation,
     );
   }
@@ -880,6 +897,7 @@ class PlayerController extends Notifier<PlayerState>
       _enginePlaybackSnapshot.copyWith(position: position),
     );
     _emitPlayerEvent(PlayerEventType.position, position: position);
+    _history.onPosition(state.currentItem, position, state.duration);
     _persistProgressWhilePlaying(position);
   }
 
@@ -1011,6 +1029,7 @@ class PlayerController extends Notifier<PlayerState>
     }
     if (reduction.shouldHandleCompleted) {
       _emitPlayerEvent(PlayerEventType.completed);
+      _history.onCompleted();
       unawaited(_session.handlePlaybackCompleted(_operationGeneration));
     }
   }
@@ -1239,6 +1258,15 @@ class PlayerController extends Notifier<PlayerState>
     bool trackProgress = false,
   }) {
     _listening?.begin(item, position, duration, trackProgress: trackProgress);
+  }
+
+  @override
+  void beginListeningHistory(
+    PlayableItem item,
+    Duration position,
+    Duration? duration,
+  ) {
+    _history.begin(item, position, duration);
   }
 
   @override

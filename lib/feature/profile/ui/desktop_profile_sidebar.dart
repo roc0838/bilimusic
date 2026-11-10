@@ -20,6 +20,7 @@ import 'package:bilimusic/feature/favorites/logic/favorites_controller.dart';
 import 'package:bilimusic/feature/favorites/ui/components/collection_kind_dialog.dart';
 import 'package:bilimusic/feature/profile/ui/components/remote_collection_import_dialog.dart';
 import 'package:bilimusic/feature/recent/logic/recent_playback_controller.dart';
+import 'package:bilimusic/feature/listening_history/data/listening_history_local_repository.dart';
 import 'package:bilimusic/feature/up/logic/favorite_up_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -69,6 +70,11 @@ class _DesktopProfileSidebarState extends ConsumerState<DesktopProfileSidebar> {
       FavoriteCollection.likedCollectionId,
     );
     final int recentCount = ref.watch(recentPlaybackControllerProvider).length;
+    final int historyCount = ListeningHistoryLocalRepository()
+        .load()
+        .map((entry) => entry.groupKey)
+        .toSet()
+        .length;
     final int favoriteUpCount = ref.watch(favoriteUpControllerProvider).length;
     final int downloadCount = ref
         .watch(downloadControllerProvider)
@@ -80,6 +86,8 @@ class _DesktopProfileSidebarState extends ConsumerState<DesktopProfileSidebar> {
     final bool isFavoriteUpSelected =
         widget.currentLocation == '/profile/favorite-ups';
     final bool isRecentSelected = widget.currentLocation == '/profile/recent';
+    final bool isHistorySelected =
+        widget.currentLocation == '/profile/listening-history';
     final bool isDownloadsSelected =
         widget.currentLocation == '/profile/downloads' ||
         widget.currentLocation.startsWith('/profile/downloads/');
@@ -183,6 +191,20 @@ class _DesktopProfileSidebarState extends ConsumerState<DesktopProfileSidebar> {
             count: recentCount,
             isSelected: isRecentSelected,
             onTap: () => context.go('/profile/recent'),
+          ),
+          const SizedBox(height: 8),
+          _SidebarListItem(
+            leading: Icon(
+              Icons.headphones_rounded,
+              size: 22,
+              color: isHistorySelected
+                  ? Colors.black
+                  : colorScheme.onSurfaceVariant,
+            ),
+            title: '收听记录',
+            count: historyCount,
+            isSelected: isHistorySelected,
+            onTap: () => context.go('/profile/listening-history'),
           ),
           const SizedBox(height: 8),
           _SidebarListItem(

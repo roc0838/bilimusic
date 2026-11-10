@@ -351,6 +351,13 @@ class _FakeHost implements PlayerSessionHost {
   }) {}
 
   @override
+  void beginListeningHistory(
+    PlayableItem item,
+    Duration position,
+    Duration? duration,
+  ) {}
+
+  @override
   void recordRecentPlayback(PlayableItem item) => calls.add('recent');
 
   @override
