@@ -13,6 +13,7 @@ abstract interface class PlayerCommandTarget {
   Future<void> seek(Duration position);
   Future<void> skipToNext();
   Future<void> skipToPrevious();
+  Future<void> skipToQueueItem(int index);
 }
 
 class PlayerAudioService {
@@ -80,9 +81,11 @@ class AppAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     required AudioProcessingState processingState,
   }) {
     final List<MediaControl> controls = <MediaControl>[
+      MediaControl.rewind,
       if (hasPrevious) MediaControl.skipToPrevious,
       isPlaying ? MediaControl.pause : MediaControl.play,
       if (hasNext) MediaControl.skipToNext,
+      MediaControl.fastForward,
       MediaControl.stop,
     ];
 
@@ -176,6 +179,41 @@ class AppAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       return;
     }
     await target.skipToPrevious();
+  }
+
+  /// 车机 / 锁屏从队列里直接选曲时走这里。
+  @override
+  Future<void> skipToQueueItem(int index) async {
+    final PlayerCommandTarget? target = _target;
+    if (target == null) {
+      return;
+    }
+    await target.skipToQueueItem(index);
+  }
+
+  /// 方向盘 / 耳机上的快进快退（iOS remote command 的 skipForward /
+  /// skipBackward 会落到这里），默认实现是空的，这里转成相对 seek。
+  @override
+  Future<void> fastForward() => _seekBy(const Duration(seconds: 15));
+
+  @override
+  Future<void> rewind() => _seekBy(const Duration(seconds: -15));
+
+  Future<void> _seekBy(Duration offset) async {
+    final PlayerCommandTarget? target = _target;
+    if (target == null) {
+      return;
+    }
+    final Duration current = playbackState.value.updatePosition;
+    final Duration? duration = mediaItem.value?.duration;
+    Duration next = current + offset;
+    if (next < Duration.zero) {
+      next = Duration.zero;
+    }
+    if (duration != null && duration > Duration.zero && next > duration) {
+      next = duration;
+    }
+    await target.seek(next);
   }
 }
 

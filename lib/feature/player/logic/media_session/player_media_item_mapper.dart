@@ -52,5 +52,14 @@ MediaItem buildPlayerQueueMediaItem(
     displayTitle: info.title ?? item.title,
     displaySubtitle: info.artist ?? item.author,
     displayDescription: item.pageTitle?.trim() ?? '',
+    // 供锁屏 / 车机的媒体会话识别分P与来源，不影响现有 UI。
+    extras: <String, dynamic>{
+      'stableId': item.stableId,
+      'bvid': item.bvid,
+      'aid': item.aid,
+      'cid': item.cid,
+      'page': item.page,
+      'pageTitle': item.pageTitle,
+    },
   );
 }

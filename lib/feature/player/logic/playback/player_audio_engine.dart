@@ -7,7 +7,15 @@ class PlayerAudioEngine {
     _subscriptions.addAll(<StreamSubscription<dynamic>>[
       _player.stream.playing.listen((_) => _emitPlayerState()),
       _player.stream.buffering.listen((_) => _emitPlayerState()),
-      _player.stream.completed.listen((_) => _emitPlayerState()),
+      _player.stream.completed.listen((dynamic completed) {
+        // mpv 的 EOF 标记是播放器级的，换源后旧值可能仍残留。这里只接受
+        // 「当前源已就绪、且已经发起过播放」之后上报的完成事件，避免上一首
+        // 的 completed 把下一首的状态污染成已完成（表现为切歌后不播放）。
+        if (_hasSource && !_isOpening && !_awaitingFirstPlay) {
+          _completedForCurrentSource = completed == true;
+        }
+        _emitPlayerState();
+      }),
     ]);
   }
 
@@ -18,6 +26,8 @@ class PlayerAudioEngine {
       <StreamSubscription<dynamic>>[];
   bool _hasSource = false;
   bool _isOpening = false;
+  bool _completedForCurrentSource = false;
+  bool _awaitingFirstPlay = false;
 
   bool get playing => _player.state.playing;
   double get volume => _player.state.volume / 100.0;
@@ -60,8 +70,20 @@ class PlayerAudioEngine {
     return _durationOrNull;
   }
 
-  Future<void> play() {
-    return _player.play();
+  Future<void> play() async {
+    // 首次开播即解除「换源保护」；此后收到的才是当前这首真正的 EOF。
+    _awaitingFirstPlay = false;
+    final bool currentSourceFinished = _completedForCurrentSource;
+    _completedForCurrentSource = false;
+    if (_player.state.completed) {
+      // mpv 停留在 EOF 时不会响应 play()。换源后的残留 EOF 要保持当前
+      // 位置（可能是续播点）；同一首真正播完后再点播放则从头开始。
+      await _player.seek(
+        currentSourceFinished ? Duration.zero : _player.state.position,
+      );
+    }
+    await _player.play();
+    _emitPlayerState();
   }
 
   Future<void> pause() {
@@ -72,6 +94,8 @@ class PlayerAudioEngine {
     await _player.stop();
     _hasSource = false;
     _isOpening = false;
+    _completedForCurrentSource = false;
+    _awaitingFirstPlay = false;
     _emitPlayerState();
   }
 
@@ -103,9 +127,12 @@ class PlayerAudioEngine {
   }) async {
     _hasSource = false;
     _isOpening = true;
+    _completedForCurrentSource = false;
+    _awaitingFirstPlay = true;
     _emitPlayerState();
     try {
       await _player.open(media, play: false);
+      _completedForCurrentSource = false;
       _hasSource = true;
       final Duration? position = initialPosition;
       if (position != null && position > Duration.zero) {
@@ -136,14 +163,14 @@ class PlayerAudioEngine {
     if (_isOpening) {
       return PlayerEngineProcessingState.loading;
     }
-    if (state.completed) {
+    if (!_hasSource) {
+      return PlayerEngineProcessingState.idle;
+    }
+    if (_completedForCurrentSource) {
       return PlayerEngineProcessingState.completed;
     }
     if (state.buffering) {
       return PlayerEngineProcessingState.buffering;
-    }
-    if (!_hasSource) {
-      return PlayerEngineProcessingState.idle;
     }
     return PlayerEngineProcessingState.ready;
   }

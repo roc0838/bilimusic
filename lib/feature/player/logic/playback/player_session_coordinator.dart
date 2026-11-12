@@ -299,7 +299,6 @@ class PlayerSessionCoordinator {
         unawaited(
           _completeCachedEntryParts(
             generation: effectiveGeneration,
-            queueIndex: queueIndex,
             entry: activeEntry,
           ),
         );
@@ -384,7 +383,12 @@ class PlayerSessionCoordinator {
     required int retryCount,
     required Set<String> skippedUnavailableStableIds,
   }) async {
-    if (error is! TimeoutException && retryCount < _maxPlaybackRetries) {
+    // 多P每集都要重新取音源地址，网络抖动导致的超时以前直接跳过该曲，
+    // 表现为「切到下一首但没有声音」。这里给超时一次重试机会。
+    final bool canRetry =
+        retryCount < _maxPlaybackRetries &&
+        (error is! TimeoutException || retryCount < 1);
+    if (canRetry) {
       final int nextRetryCount = retryCount + 1;
       _engineRetryCount = nextRetryCount;
       final PlayableItem failedItem = _state.queue[failedIndex];
@@ -603,17 +607,19 @@ class PlayerSessionCoordinator {
 
   Future<void> _completeCachedEntryParts({
     required int generation,
-    required int queueIndex,
     required ResolvedQueueEntry entry,
   }) async {
     final ResolvedQueueEntry? completed = await _playbackLoader
         .resolveCachedEntryParts(entry);
+    // 分P队列可能已在起播时被重建，原来的 queueIndex 不再可靠，
+    // 一律按 stableId 重新定位当前曲目。
+    final int currentIndex = _state.queue.indexWhere(
+      (PlayableItem queued) => queued.stableId == entry.item.stableId,
+    );
     if (completed == null ||
         !_host.isCurrentGeneration(generation) ||
-        _state.currentQueueIndex != queueIndex ||
-        queueIndex >= _state.queue.length ||
-        _state.currentItem?.stableId != entry.item.stableId ||
-        _state.queue[queueIndex].stableId != entry.item.stableId) {
+        currentIndex < 0 ||
+        _state.currentItem?.stableId != entry.item.stableId) {
       return;
     }
 
@@ -621,7 +627,7 @@ class PlayerSessionCoordinator {
       _state.copyWith(
         queue: _playbackLoader.replaceQueueEntry(
           queue: _state.queue,
-          index: queueIndex,
+          index: currentIndex,
           item: completed.item,
         ),
         currentItem: completed.item,

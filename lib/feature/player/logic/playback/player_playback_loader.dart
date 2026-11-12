@@ -90,10 +90,10 @@ class PlayerPlaybackLoader {
   Future<ResolvedQueueEntry> resolveQueueEntry(
     PlayableItem item, {
     int? preferredQualityId,
-  }) => _resolveQueueEntry(
+  }  ) => _resolveQueueEntry(
     item,
     preferredQualityId: preferredQualityId,
-  ).timeout(const Duration(seconds: 5));
+  ).timeout(const Duration(seconds: 10));
 
   Future<ResolvedQueueEntry> _resolveQueueEntry(
     PlayableItem item, {

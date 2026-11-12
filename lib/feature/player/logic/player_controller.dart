@@ -543,8 +543,6 @@ class PlayerController extends Notifier<PlayerState>
       return;
     }
 
-    // 多P资源起播时，把「只含所选分P」的队列重建成该资源的完整有序分P列表，
-    // 并让播放位置对准用户选中的那一集，这样下一集能自动接着播。
     final int partIndex = _indexInParts(parts, currentItem);
     if (partIndex < 0) {
       await enqueue(parts);
@@ -562,15 +560,26 @@ class PlayerController extends Notifier<PlayerState>
       return;
     }
 
-    final List<PlayableItem> queue = List<PlayableItem>.unmodifiable(parts);
+    // 这个方法会在 load() 中途被调用。此前它整体替换 state 并同步等待落盘，
+    // 既覆盖了本轮刚解析出的 currentItem，又给播放命令前插入了异步窗口，
+    // 导致切到下一首后 play() 被状态检查挡掉。现在只重建队列与索引，
+    // 保留 currentItem，且不做同步 IO / 中途发布状态。
+    final bool alreadyExpanded =
+        state.queue.length == parts.length &&
+        state.currentQueueIndex == partIndex &&
+        state.queue.every(
+          (PlayableItem item) => partIds.contains(item.stableId),
+        );
+    if (alreadyExpanded) {
+      return;
+    }
+
+    final List<PlayableItem> rebuilt = List<PlayableItem>.of(parts);
+    rebuilt[partIndex] = currentItem;
+    final List<PlayableItem> queue = List<PlayableItem>.unmodifiable(rebuilt);
     _queueManager.resetForQueue(currentIndex: partIndex);
-    state = state.copyWith(
-      queue: queue,
-      currentQueueIndex: partIndex,
-      currentItem: queue[partIndex],
-    );
-    _publishPlaybackState();
-    await _persistQueueSnapshot();
+    state = state.copyWith(queue: queue, currentQueueIndex: partIndex);
+    unawaited(_persistQueueSnapshot());
   }
 
   int _indexInParts(List<PlayableItem> parts, PlayableItem current) {
@@ -834,6 +843,9 @@ class PlayerController extends Notifier<PlayerState>
       generation: generation,
     );
   }
+
+  @override
+  Future<void> skipToQueueItem(int index) => skipToQueueIndex(index);
 
   void toggleQueueMode() {
     final PlayerQueueMode nextMode = switch (state.queueMode) {
@@ -1371,11 +1383,12 @@ class PlayerController extends Notifier<PlayerState>
 
   // 播放当前源。
   Future<void> _playCurrentSource() async {
-    final int generation = _operationGeneration;
-    await _activateAudioSessionForPlayback();
-    if (!_isCurrentGeneration(generation)) {
+    // 先校验再激活：音频会话激活过程中可能上报中断事件并推进 generation，
+    // 旧写法把校验放在 await 之后，会让刚切过来的曲目直接丢掉播放命令。
+    if (!_isCurrentGeneration(_operationGeneration)) {
       return;
     }
+    await _activateAudioSessionForPlayback();
     await _audioEngine.play();
   }
 
