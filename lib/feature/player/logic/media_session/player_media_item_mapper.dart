@@ -10,6 +10,7 @@ MediaItem buildPlayerMediaItem(
   required String? queueSourceLabel,
   Duration? duration,
   PlayerDisplayInfo? display,
+  String? lockScreenLyricLine,
 }) {
   final String pageTitle = audioStream.pageTitle?.trim() ?? '';
   final String qualityLabel = audioStream.qualityLabel?.trim() ?? '';
@@ -23,6 +24,7 @@ MediaItem buildPlayerMediaItem(
     queueSourceLabel: queueSourceLabel,
     duration: duration ?? audioStream.duration,
     display: display,
+    lockScreenLyricLine: lockScreenLyricLine,
   ).copyWith(displayDescription: descriptionParts.join(' · '));
 }
 
@@ -31,6 +33,7 @@ MediaItem buildPlayerQueueMediaItem(
   required String? queueSourceLabel,
   Duration? duration,
   PlayerDisplayInfo? display,
+  String? lockScreenLyricLine,
 }) {
   final PlayerDisplayInfo info =
       !item.isSpoken && display?.stableId == item.stableId
@@ -41,6 +44,9 @@ MediaItem buildPlayerQueueMediaItem(
           source: PlayerDisplaySource.bilibili,
         );
   final String album = queueSourceLabel?.trim() ?? '';
+  // iOS 锁屏 / 控制中心没有歌词字段，只能借用 Now Playing 的副标题行。
+  // 只有真正解析到当前歌词行时才替换，其余情况与原来的歌手信息完全一致。
+  final String lyricLine = lockScreenLyricLine?.trim() ?? '';
 
   return MediaItem(
     id: item.stableId,
@@ -50,7 +56,9 @@ MediaItem buildPlayerQueueMediaItem(
     artUri: info.coverUrl == null ? null : Uri.tryParse(info.coverUrl!),
     duration: duration,
     displayTitle: info.title ?? item.title,
-    displaySubtitle: info.artist ?? item.author,
+    displaySubtitle: lyricLine.isEmpty
+        ? (info.artist ?? item.author)
+        : lyricLine,
     displayDescription: item.pageTitle?.trim() ?? '',
     // 供锁屏 / 车机的媒体会话识别分P与来源，不影响现有 UI。
     extras: <String, dynamic>{

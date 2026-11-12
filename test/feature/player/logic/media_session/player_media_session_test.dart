@@ -14,6 +14,7 @@ import 'package:bilimusic/feature/player/logic/display/player_display_source_log
 import 'package:bilimusic/feature/player/logic/media_session/player_media_item_mapper.dart';
 import 'package:bilimusic/feature/player/logic/media_session/player_media_session_sync.dart';
 import 'package:bilimusic/feature/player/logic/display/player_display_metadata.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -93,6 +94,62 @@ void main() {
       }
       expect(items.last.duration, _stream.duration);
       expect(items.last.displayDescription, 'Part title · 192K');
+    }
+  });
+
+  test('lock screen lyric line only replaces the now playing subtitle', () {
+    final MediaItem withLyric = buildPlayerMediaItem(
+      _item,
+      audioStream: _stream,
+      queueSourceLabel: 'Favorites',
+      lockScreenLyricLine: '  这一句歌词  ',
+    );
+    expect(withLyric.displaySubtitle, '这一句歌词');
+    expect(withLyric.artist, _item.author);
+    expect(withLyric.title, _item.title);
+
+    final MediaItem blankLyric = buildPlayerMediaItem(
+      _item,
+      audioStream: _stream,
+      queueSourceLabel: 'Favorites',
+      lockScreenLyricLine: '   ',
+    );
+    expect(blankLyric.displaySubtitle, _item.author);
+  });
+
+  test('lock screen lyric follows the timeline on iOS only', () {
+    final MetadataState metadata = MetadataState(
+      stableId: _item.stableId,
+      metadata: _metadata.copyWith(lyrics: '[00:00.00]第一句\n[00:10.00]第二句'),
+      hasSearched: true,
+    );
+    final PlayerState late = _playingItem().copyWith(
+      position: const Duration(seconds: 12),
+    );
+    expect(resolveLockScreenLyricLine(state: late, metadata: metadata), isNull);
+
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    try {
+      expect(
+        resolveLockScreenLyricLine(state: late, metadata: metadata),
+        '第二句',
+      );
+      expect(
+        resolveLockScreenLyricLine(
+          state: _playingItem().copyWith(position: const Duration(seconds: 2)),
+          metadata: metadata,
+        ),
+        '第一句',
+      );
+      expect(
+        resolveLockScreenLyricLine(
+          state: late,
+          metadata: const MetadataState(),
+        ),
+        isNull,
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
     }
   });
 
