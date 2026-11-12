@@ -175,12 +175,15 @@ class PlayerSessionCoordinator {
     );
     _host.publishPlaybackState();
 
+    final Stopwatch stopwatch = Stopwatch()..start();
     try {
+      // 自动续播时 host 会跳过这一步：iOS 在后台/锁屏只允许「正在出声」的
+      // App 继续执行，stop() 会让音频会话失活，系统随即挂起 Dart isolate，
+      // 后面的解析 / open / play 全都没机会跑完（表现为播完不切歌）。
       await _host.stopAudioEngine();
       if (!_host.isCurrentGeneration(effectiveGeneration)) {
         return false;
       }
-
       await _host.activateAudioSessionForPlayback();
       if (!_host.isCurrentGeneration(effectiveGeneration)) {
         return false;
@@ -264,6 +267,14 @@ class PlayerSessionCoordinator {
           startPosition = Duration.zero;
         }
       }
+      _host.logPlayerEvent(
+        'loadQueueIndex:source-resolved',
+        details: <String, Object?>{
+          'stableId': activeEntry.item.stableId,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+          'parts': activeEntry.availableParts.length,
+        },
+      );
       final Duration? loadedDuration = await _playbackLoader.setSourceForEntry(
         entry: activeEntry,
         initialPosition: startPosition,
@@ -273,8 +284,23 @@ class PlayerSessionCoordinator {
         },
       );
       if (!_host.isCurrentGeneration(effectiveGeneration)) {
+        _host.logPlayerEvent(
+          'loadQueueIndex:stale-after-open',
+          details: <String, Object?>{
+            'generation': effectiveGeneration,
+            'elapsedMs': stopwatch.elapsedMilliseconds,
+          },
+        );
         return false;
       }
+      _host.logPlayerEvent(
+        'loadQueueIndex:source-opened',
+        details: <String, Object?>{
+          'stableId': activeEntry.item.stableId,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+          'durationMs': loadedDuration?.inMilliseconds,
+        },
+      );
 
       _applyResolvedCurrentEntry(
         queueIndex: queueIndex,
@@ -327,8 +353,25 @@ class PlayerSessionCoordinator {
         await _host.persistQueueSnapshot();
       }
       _host.publishPlaybackState();
+      _host.logPlayerEvent(
+        'loadQueueIndex:done',
+        details: <String, Object?>{
+          'stableId': activeEntry.item.stableId,
+          'queueIndex': _state.currentQueueIndex,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+          'autoplay': autoplay,
+        },
+      );
       return true;
     } on BiliPlayerException catch (error) {
+      _host.logPlayerEvent(
+        'loadQueueIndex:failed',
+        details: <String, Object?>{
+          'stableId': targetItem.stableId,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+          'error': error.toString(),
+        },
+      );
       if (!_host.isCurrentGeneration(effectiveGeneration)) {
         return false;
       }
@@ -356,6 +399,14 @@ class PlayerSessionCoordinator {
         skippedUnavailableStableIds: skippedUnavailableStableIds,
       );
     } on Object catch (error) {
+      _host.logPlayerEvent(
+        'loadQueueIndex:failed',
+        details: <String, Object?>{
+          'stableId': targetItem.stableId,
+          'elapsedMs': stopwatch.elapsedMilliseconds,
+          'error': error.toString(),
+        },
+      );
       if (!_host.isCurrentGeneration(effectiveGeneration)) {
         return false;
       }
@@ -449,10 +500,22 @@ class PlayerSessionCoordinator {
   }
 
   Future<void> handlePlaybackCompleted(int generation) async {
+    _host.logPlayerEvent(
+      'autoAdvance:handleCompleted',
+      details: <String, Object?>{
+        'generation': generation,
+        'isHandling': _isHandlingPlaybackCompleted,
+        'isAdvancing': _host.isAdvancingQueue,
+        'queueLength': _state.queue.length,
+        'currentIndex': _state.currentQueueIndex,
+      },
+    );
     if (_isHandlingPlaybackCompleted || _host.isAdvancingQueue) {
+      _host.logPlayerEvent('autoAdvance:skipped-busy');
       return;
     }
     if (!_host.isCurrentGeneration(generation)) {
+      _host.logPlayerEvent('autoAdvance:skipped-stale');
       return;
     }
 
@@ -472,6 +535,13 @@ class PlayerSessionCoordinator {
       }
 
       await _host.skipToNextTrack();
+      _host.logPlayerEvent(
+        'autoAdvance:skipToNext:done',
+        details: <String, Object?>{
+          'currentIndex': _state.currentQueueIndex,
+          'stableId': _state.currentItem?.stableId,
+        },
+      );
     } finally {
       _isHandlingPlaybackCompleted = false;
     }

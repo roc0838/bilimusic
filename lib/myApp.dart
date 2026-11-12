@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:bilimusic/common/diagnostics/player_diagnostics.dart';
 import 'package:bilimusic/core/devtools/dev_overlay.dart';
 import 'package:bilimusic/core/layout/app_layout.dart';
 import 'package:bilimusic/core/theme/app_theme.dart';
@@ -25,12 +26,14 @@ class MyApp extends ConsumerStatefulWidget {
   ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends ConsumerState<MyApp> {
+class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   Timer? _updateCheck;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    PlayerDiagnostics.instance.onLifecycleChanged(AppLifecycleState.resumed.name);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _updateCheck = Timer(const Duration(milliseconds: 600), () {
@@ -44,8 +47,15 @@ class _MyAppState extends ConsumerState<MyApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _updateCheck?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    PlayerDiagnostics.instance.onLifecycleChanged(state.name);
   }
 
   @override

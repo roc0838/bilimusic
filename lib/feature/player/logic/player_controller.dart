@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:bilimusic/common/diagnostics/player_diagnostics.dart';
 import 'package:bilimusic/common/logger.dart';
 import 'package:bilimusic/common/util/toast_util.dart';
 import 'package:bilimusic/core/bili/session/bili_session_controller.dart';
@@ -124,7 +125,20 @@ class PlayerController extends Notifier<PlayerState>
   Duration _lastPersistedProgress = Duration.zero;
   Duration? _pendingSeekTarget;
 
+  String? _prefetchedFor;
+  bool _isPrefetchingNext = false;
+  bool _isAutoAdvancingNearEnd = false;
+  DateTime? _suppressCompletedUntil;
+
   static const Duration _persistProgressStep = Duration(seconds: 10);
+
+  // 后台 / 锁屏自动续播：把「解析下一首音源」和「发起切歌」提前到当前曲
+  // 还在出声的时候完成。iOS 只允许正在播放音频的 App 在后台继续执行，
+  // 等 EOF 之后再做网络解析会被系统挂起，表现为播完停在原地不切歌。
+  static const Duration _prefetchWindow = Duration(seconds: 60);
+  static const Duration _nearEndWindow = Duration(seconds: 2);
+  static const Duration _completedSuppressionWindow = Duration(seconds: 12);
+  static const Duration _shortTrackGuard = Duration(seconds: 20);
 
   @override
   PlayerState build() {
@@ -223,6 +237,8 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   Future<void> pause() async {
+    PlayerDiagnostics.instance.log('command:pause');
+    _resetAutoAdvanceGuards();
     unawaited(_history.flush());
     _nextGeneration();
     _session.cancelPendingRetry();
@@ -330,6 +346,7 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   Future<void> seek(Duration position) async {
+    _resetAutoAdvanceGuards();
     _emitPlayerEvent(PlayerEventType.seek, position: position);
     final Duration target = position < Duration.zero ? Duration.zero : position;
     _pendingSeekTarget = target;
@@ -399,6 +416,7 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   Future<void> stop() async {
+    _resetAutoAdvanceGuards();
     final int generation = _nextGeneration();
     _suspendListening();
     await _audioEngine.stop();
@@ -429,6 +447,7 @@ class PlayerController extends Notifier<PlayerState>
       return;
     }
 
+    _resetAutoAdvanceGuards();
     final int generation = _nextGeneration();
     _suspendListening();
     await _history.flush();
@@ -763,6 +782,7 @@ class PlayerController extends Notifier<PlayerState>
   }
 
   Future<void> clearQueue() async {
+    _resetAutoAdvanceGuards();
     _nextGeneration();
     _suspendListening();
     _queueManager.resetForQueue(currentIndex: null);
@@ -808,6 +828,14 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   Future<void> skipToNext() async {
+    PlayerDiagnostics.instance.log(
+      'command:skipToNext',
+      <String, Object?>{
+        'isAdvancing': _isAdvancingQueue,
+        'currentIndex': state.currentQueueIndex,
+        'queueLength': state.queue.length,
+      },
+    );
     if (_isAdvancingQueue) {
       return;
     }
@@ -836,12 +864,34 @@ class PlayerController extends Notifier<PlayerState>
     }
 
     final int generation = _nextGeneration();
-    await _session.load(
-      index,
-      autoplay: autoplay,
-      initialPosition: Duration.zero,
-      generation: generation,
+    PlayerDiagnostics.instance.log(
+      'skipToQueueIndex:start',
+      <String, Object?>{
+        'index': index,
+        'generation': generation,
+        'autoplay': autoplay,
+        'queueLength': state.queue.length,
+      },
     );
+    try {
+      await _session.load(
+        index,
+        autoplay: autoplay,
+        initialPosition: Duration.zero,
+        generation: generation,
+      );
+    } finally {
+      // 新曲目已经开始（或本轮切歌已结束），允许下一轮尾声再次触发。
+      _isAutoAdvancingNearEnd = false;
+      _prefetchedFor = null;
+      PlayerDiagnostics.instance.log(
+        'skipToQueueIndex:done',
+        <String, Object?>{
+          'index': state.currentQueueIndex,
+          'stableId': state.currentItem?.stableId,
+        },
+      );
+    }
   }
 
   @override
@@ -974,6 +1024,96 @@ class PlayerController extends Notifier<PlayerState>
     _emitPlayerEvent(PlayerEventType.position, position: position);
     _history.onPosition(state.currentItem, position, state.duration);
     _persistProgressWhilePlaying(position);
+    _maybeHandleNearEnd(position);
+  }
+
+  /// 尾声处理：提前预解析下一首音源，并在真正 EOF 之前发起切歌。
+  /// 这样后台/锁屏时切歌不依赖「播完之后再联网」的那段执行时间。
+  void _maybeHandleNearEnd(Duration position) {
+    if (_isAutoAdvancingNearEnd ||
+        !state.isPlaying ||
+        !state.hasActiveQueueIndex ||
+        state.queueMode == PlayerQueueMode.singleRepeat) {
+      return;
+    }
+    final Duration? duration = state.duration;
+    if (duration == null || duration < _shortTrackGuard) {
+      return;
+    }
+    final Duration remaining = duration - position;
+    if (remaining > _prefetchWindow) {
+      return;
+    }
+
+    final String key =
+        '${state.currentItem?.stableId ?? ''}#${duration.inMilliseconds}';
+    if (!_isPrefetchingNext && _prefetchedFor != key) {
+      _prefetchedFor = key;
+      unawaited(_prefetchNextQueueEntry(key));
+    }
+
+    if (remaining > _nearEndWindow || state.queue.length < 2) {
+      return;
+    }
+    // 这里不能用 resolveNextIndex：随机模式下它会推进 shuffle 游标，
+    // 提前调用会把真正切歌时的目标改掉。真正的选曲仍由 skipToNext() 决定。
+    _isAutoAdvancingNearEnd = true;
+    _suppressCompletedUntil = DateTime.now().add(
+      _completedSuppressionWindow,
+    );
+    PlayerDiagnostics.instance.log(
+      'autoAdvance:near-end',
+      <String, Object?>{
+        'stableId': state.currentItem?.stableId,
+        'positionMs': position.inMilliseconds,
+        'durationMs': duration.inMilliseconds,
+        'remainingMs': remaining.inMilliseconds,
+        'queueLength': state.queue.length,
+        'generation': _operationGeneration,
+      },
+    );
+    // 提前 2 秒切歌等同于本曲已听完，先落盘本地收听记录（下次点开从头播）。
+    _history.onCompleted();
+    unawaited(_session.handlePlaybackCompleted(_operationGeneration));
+  }
+
+  Future<void> _prefetchNextQueueEntry(String key) async {
+    if (state.queueMode == PlayerQueueMode.singleRepeat) {
+      return;
+    }
+    _isPrefetchingNext = true;
+    try {
+      final int? currentIndex = state.currentQueueIndex;
+      if (currentIndex == null || state.queue.length < 2) {
+        return;
+      }
+      // 只做「候选预取」，不调用有副作用的 resolveNextIndex。
+      final int nextIndex = (currentIndex + 1) % state.queue.length;
+      final PlayableItem nextItem = state.queue[nextIndex];
+      PlayerDiagnostics.instance.log(
+        'prefetch:start',
+        <String, Object?>{
+          'for': key,
+          'nextIndex': nextIndex,
+          'stableId': nextItem.stableId,
+        },
+      );
+      await _playbackLoader.resolveQueueEntry(
+        nextItem,
+        preferredQualityId: _qualityOverrides[nextItem.stableId],
+      );
+      PlayerDiagnostics.instance.log(
+        'prefetch:done',
+        <String, Object?>{'stableId': nextItem.stableId},
+      );
+    } on Object catch (error) {
+      PlayerDiagnostics.instance.log(
+        'prefetch:failed',
+        <String, Object?>{'for': key, 'error': error.toString()},
+      );
+    } finally {
+      _isPrefetchingNext = false;
+    }
   }
 
   // 自动存储进度
@@ -1088,6 +1228,18 @@ class PlayerController extends Notifier<PlayerState>
     _EnginePlaybackChange change,
     _EnginePlaybackSnapshot nextSnapshot,
   ) {
+    if (change == _EnginePlaybackChange.playerState) {
+      PlayerDiagnostics.instance.log(
+        'engine:state',
+        <String, Object?>{
+          'playing': nextSnapshot.playing,
+          'processing': nextSnapshot.processingState.name,
+          'previous': _enginePlaybackSnapshot.processingState.name,
+          'stableId': state.currentItem?.stableId,
+          'isLoading': state.isLoading,
+        },
+      );
+    }
     final _EnginePlaybackSnapshot previousSnapshot = _enginePlaybackSnapshot;
     _enginePlaybackSnapshot = nextSnapshot;
     final _EnginePlaybackReduction reduction = _reduceEnginePlaybackSnapshot(
@@ -1103,9 +1255,27 @@ class PlayerController extends Notifier<PlayerState>
       _publishPlaybackState(processingState: reduction.mediaProcessingState);
     }
     if (reduction.shouldHandleCompleted) {
+      final DateTime? suppressUntil = _suppressCompletedUntil;
+      final bool suppressed =
+          suppressUntil != null && DateTime.now().isBefore(suppressUntil);
+      PlayerDiagnostics.instance.log(
+        'autoAdvance:completed-event',
+        <String, Object?>{
+          'suppressed': suppressed,
+          'stableId': state.currentItem?.stableId,
+          'positionMs': state.position.inMilliseconds,
+          'generation': _operationGeneration,
+        },
+      );
       _emitPlayerEvent(PlayerEventType.completed);
-      _history.onCompleted();
-      unawaited(_session.handlePlaybackCompleted(_operationGeneration));
+      // 尾声已经提前发起过切歌时，这次 EOF 只是旧音源被替换产生的补报，
+      // 不能再切一次，也不能把「已听完」写到刚加载的下一首上。
+      if (!suppressed) {
+        // EOF 触发的续播同样跳过 stop()，保持后台音频会话活跃。
+        _isAutoAdvancingNearEnd = true;
+        _history.onCompleted();
+        unawaited(_session.handlePlaybackCompleted(_operationGeneration));
+      }
     }
   }
 
@@ -1296,7 +1466,16 @@ class PlayerController extends Notifier<PlayerState>
   Future<void> skipToNextTrack() => skipToNext();
 
   @override
-  Future<void> stopAudioEngine() => _audioEngine.stop();
+  Future<void> stopAudioEngine() {
+    if (_isAutoAdvancingNearEnd) {
+      // 后台/锁屏自动续播：不要让 mpv / AVAudioSession 失活。iOS 一旦检测到
+      // 音频停止就会挂起 Dart isolate，后面的解析、open、play 都会卡住。
+      // 这里直接让 open() 替换音源，整条音频链路保持活跃。
+      PlayerDiagnostics.instance.log('loadQueueIndex:skip-stop');
+      return Future<void>.value();
+    }
+    return _audioEngine.stop();
+  }
 
   @override
   Future<void> pauseAudioEngine() => _audioEngine.pause();
@@ -1353,6 +1532,13 @@ class PlayerController extends Notifier<PlayerState>
 
   @override
   void showToast(String message) => ToastUtil.show(message);
+
+  void _resetAutoAdvanceGuards() {
+    _prefetchedFor = null;
+    _isAutoAdvancingNearEnd = false;
+    _suppressCompletedUntil = null;
+  }
+
   int _nextGeneration() {
     _operationGeneration += 1;
     return _operationGeneration;
@@ -1383,13 +1569,23 @@ class PlayerController extends Notifier<PlayerState>
 
   // 播放当前源。
   Future<void> _playCurrentSource() async {
+    PlayerDiagnostics.instance.log(
+      'command:playCurrentSource',
+      <String, Object?>{
+        'generation': _operationGeneration,
+        'stableId': state.currentItem?.stableId,
+        'isLoading': state.isLoading,
+      },
+    );
     // 先校验再激活：音频会话激活过程中可能上报中断事件并推进 generation，
     // 旧写法把校验放在 await 之后，会让刚切过来的曲目直接丢掉播放命令。
     if (!_isCurrentGeneration(_operationGeneration)) {
+      PlayerDiagnostics.instance.log('command:playCurrentSource:stale');
       return;
     }
     await _activateAudioSessionForPlayback();
     await _audioEngine.play();
+    PlayerDiagnostics.instance.log('command:playCurrentSource:done');
   }
 
   Future<void> _persistQueueSnapshot() async {

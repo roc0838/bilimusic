@@ -88,6 +88,8 @@ class _DesktopProfileSidebarState extends ConsumerState<DesktopProfileSidebar> {
     final bool isRecentSelected = widget.currentLocation == '/profile/recent';
     final bool isHistorySelected =
         widget.currentLocation == '/profile/listening-history';
+    final bool isDiagnosticsSelected =
+        widget.currentLocation == '/profile/playback-diagnostics';
     final bool isDownloadsSelected =
         widget.currentLocation == '/profile/downloads' ||
         widget.currentLocation.startsWith('/profile/downloads/');
@@ -205,6 +207,21 @@ class _DesktopProfileSidebarState extends ConsumerState<DesktopProfileSidebar> {
             count: historyCount,
             isSelected: isHistorySelected,
             onTap: () => context.go('/profile/listening-history'),
+          ),
+          const SizedBox(height: 8),
+          _SidebarListItem(
+            leading: Icon(
+              Icons.bug_report_outlined,
+              size: 22,
+              color: isDiagnosticsSelected
+                  ? Colors.black
+                  : colorScheme.onSurfaceVariant,
+            ),
+            title: '播放诊断',
+            count: 0,
+            showZeroCount: false,
+            isSelected: isDiagnosticsSelected,
+            onTap: () => context.go('/profile/playback-diagnostics'),
           ),
           const SizedBox(height: 8),
           _SidebarListItem(

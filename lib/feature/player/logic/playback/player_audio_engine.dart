@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bilimusic/common/diagnostics/player_diagnostics.dart';
 import 'package:media_kit/media_kit.dart' as media_kit;
 
 class PlayerAudioEngine {
@@ -11,7 +12,20 @@ class PlayerAudioEngine {
         // mpv 的 EOF 标记是播放器级的，换源后旧值可能仍残留。这里只接受
         // 「当前源已就绪、且已经发起过播放」之后上报的完成事件，避免上一首
         // 的 completed 把下一首的状态污染成已完成（表现为切歌后不播放）。
-        if (_hasSource && !_isOpening && !_awaitingFirstPlay) {
+        final bool accepted =
+            _hasSource && !_isOpening && !_awaitingFirstPlay;
+        PlayerDiagnostics.instance.log(
+          'engine:eof-raw',
+          <String, Object?>{
+            'value': completed,
+            'accepted': accepted,
+            'hasSource': _hasSource,
+            'isOpening': _isOpening,
+            'awaitingFirstPlay': _awaitingFirstPlay,
+            'positionMs': _player.state.position.inMilliseconds,
+          },
+        );
+        if (accepted) {
           _completedForCurrentSource = completed == true;
         }
         _emitPlayerState();
@@ -72,6 +86,15 @@ class PlayerAudioEngine {
 
   Future<void> play() async {
     // 首次开播即解除「换源保护」；此后收到的才是当前这首真正的 EOF。
+    PlayerDiagnostics.instance.log(
+      'engine:play',
+      <String, Object?>{
+        'mpvCompleted': _player.state.completed,
+        'currentSourceFinished': _completedForCurrentSource,
+        'awaitingFirstPlay': _awaitingFirstPlay,
+        'positionMs': _player.state.position.inMilliseconds,
+      },
+    );
     _awaitingFirstPlay = false;
     final bool currentSourceFinished = _completedForCurrentSource;
     _completedForCurrentSource = false;
@@ -91,6 +114,7 @@ class PlayerAudioEngine {
   }
 
   Future<void> stop() async {
+    PlayerDiagnostics.instance.log('engine:stop');
     await _player.stop();
     _hasSource = false;
     _isOpening = false;
@@ -124,7 +148,13 @@ class PlayerAudioEngine {
   Future<void> _openMedia(
     media_kit.Media media, {
     Duration? initialPosition,
-  }) async {
+  }  ) async {
+    PlayerDiagnostics.instance.log(
+      'engine:open:start',
+      <String, Object?>{
+        'initialPositionMs': initialPosition?.inMilliseconds,
+      },
+    );
     _hasSource = false;
     _isOpening = true;
     _completedForCurrentSource = false;
@@ -132,6 +162,7 @@ class PlayerAudioEngine {
     _emitPlayerState();
     try {
       await _player.open(media, play: false);
+      PlayerDiagnostics.instance.log('engine:open:done');
       _completedForCurrentSource = false;
       _hasSource = true;
       final Duration? position = initialPosition;
